@@ -1,0 +1,10 @@
+[package]
+name = "flock-ref"
+description = "CPU oracle for the flock core step shared by every GPU backend in this repo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+glam.workspace = true
