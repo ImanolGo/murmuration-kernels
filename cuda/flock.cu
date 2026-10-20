@@ -1,14 +1,16 @@
 // CUDA C++ baseline for the flock core step (docs/SPEC.md).
 //
 // A straightforward port of the passes murmur-gpu runs with wgpu: hash each bird
-// into a cell bucket, sort birds by bucket, find each bucket's range, then
-// decide and integrate. Mirrors crates/flock-ref/src/model.rs operation by
+// into a cell bucket, counting-sort the birds by bucket (histogram, two-level
+// scan, scatter), then decide and integrate. The counting sort is hand-written
+// on purpose: every backend in this repo uses the same grid algorithm, and a
+// Rust kernel cannot call CUB. (The first baseline used cub::DeviceRadixSort;
+// see docs/progress.md for its numbers.) Mirrors crates/flock-ref/src/model.rs operation by
 // operation. This is the unoptimised reference point; optimisations go into
 // separate, named commits so each one can be measured.
 //
 // Build: make -C cuda          Run: cuda/build/flock_cuda --in start.flk --steps 100 --out end.flk
 
-#include <cub/cub.cuh>
 #include <cuda_runtime.h>
 
 #include <algorithm>
@@ -100,28 +102,80 @@ struct Flock {
     float* next_decision;
     float* centrality;
     uint32_t* neighbours;
-    // grid
-    uint32_t* key_in;
-    uint32_t* key_sorted;
-    uint32_t* idx_in;
-    uint32_t* idx_sorted;
-    uint32_t* range_start;
-    uint32_t* range_end;
+    // grid (the passes of murmur-gpu's grid.wgsl)
+    uint32_t* bucket;      // bucket of each bird
+    uint32_t* counts;      // histogram, then re-seeded as the scatter cursor
+    uint32_t* offsets;     // exclusive scan of counts; buckets + 1 entries
+    uint32_t* block_sums;  // one total per scan block
+    uint32_t* sorted;      // bird indices ordered by bucket
 };
 
-__global__ void grid_keys(Flock f) {
+constexpr int SCAN_WG = 256;
+constexpr int SCAN_EPT = 8;                   // elements per thread
+constexpr int SCAN_BLOCK = SCAN_WG * SCAN_EPT;  // buckets per scan block
+
+// Records each bird's bucket and counts one per bucket (counts zeroed first).
+__global__ void grid_histogram(Flock f) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= f.n) return;
-    f.key_in[i] = bucket_of(cell_of(xyz(f.pos[i])), f.buckets - 1);
-    f.idx_in[i] = i;
+    uint32_t b = bucket_of(cell_of(xyz(f.pos[i])), f.buckets - 1);
+    f.bucket[i] = b;
+    atomicAdd(&f.counts[b], 1u);
 }
 
-__global__ void grid_ranges(Flock f) {
-    int s = blockIdx.x * blockDim.x + threadIdx.x;
-    if (s >= f.n) return;
-    uint32_t k = f.key_sorted[s];
-    if (s == 0 || f.key_sorted[s - 1] != k) f.range_start[k] = s;
-    if (s == f.n - 1 || f.key_sorted[s + 1] != k) f.range_end[k] = s + 1;
+// Exclusive scan of 256 per-thread sums in shared memory (Hillis-Steele).
+// Returns this thread's exclusive prefix; `total` is the block total.
+__device__ __forceinline__ uint32_t block_exclusive_scan(uint32_t v, uint32_t* total) {
+    __shared__ uint32_t sh[SCAN_WG];
+    const int t = threadIdx.x;
+    sh[t] = v;
+    __syncthreads();
+    for (int off = 1; off < SCAN_WG; off <<= 1) {
+        uint32_t x = t >= off ? sh[t - off] : 0u;
+        __syncthreads();
+        sh[t] += x;
+        __syncthreads();
+    }
+    *total = sh[SCAN_WG - 1];
+    return sh[t] - v;
+}
+
+// Level 1: each block scans SCAN_BLOCK buckets and writes its total.
+__global__ void grid_scan_blocks(Flock f) {
+    const uint32_t base = blockIdx.x * SCAN_BLOCK + threadIdx.x * SCAN_EPT;
+    uint32_t c[SCAN_EPT], sum = 0;
+    for (int k = 0; k < SCAN_EPT; ++k) { c[k] = f.counts[base + k]; sum += c[k]; }
+    uint32_t total;
+    uint32_t run = block_exclusive_scan(sum, &total);
+    for (int k = 0; k < SCAN_EPT; ++k) { f.offsets[base + k] = run; run += c[k]; }
+    if (threadIdx.x == 0) f.block_sums[blockIdx.x] = total;
+}
+
+// Level 2: one block scans the block totals in place (at most 2048 of them).
+__global__ void grid_scan_totals(Flock f, uint32_t nblocks) {
+    const uint32_t base = threadIdx.x * SCAN_EPT;
+    uint32_t c[SCAN_EPT], sum = 0;
+    for (int k = 0; k < SCAN_EPT; ++k) { c[k] = base + k < nblocks ? f.block_sums[base + k] : 0u; sum += c[k]; }
+    uint32_t total;
+    uint32_t run = block_exclusive_scan(sum, &total);
+    for (int k = 0; k < SCAN_EPT; ++k) { if (base + k < nblocks) f.block_sums[base + k] = run; run += c[k]; }
+}
+
+// Level 3: add each block's start offset, re-seed counts as the scatter cursor.
+__global__ void grid_scan_add(Flock f) {
+    uint32_t b = blockIdx.x * blockDim.x + threadIdx.x;
+    if (b >= f.buckets) return;
+    uint32_t o = f.offsets[b] + f.block_sums[b / SCAN_BLOCK];
+    f.offsets[b] = o;
+    f.counts[b] = o;
+    if (b == 0) f.offsets[f.buckets] = f.n;
+}
+
+// Writes each bird's index into its bucket's range.
+__global__ void grid_scatter(Flock f) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= f.n) return;
+    f.sorted[atomicAdd(&f.counts[f.bucket[i]], 1u)] = i;
 }
 
 // radius_step from flock-ref params.rs.
@@ -158,8 +212,8 @@ __global__ void decide(Flock f, float time) {
                     const int3 cell = make_int3(cx, cy, cz);
                     if (!cell_intersects_sphere(cell, p, r2)) continue;
                     const uint32_t b = bucket_of(cell, mask);
-                    for (uint32_t s = f.range_start[b], e = f.range_end[b]; s < e; ++s) {
-                        const uint32_t j = f.idx_sorted[s];
+                    for (uint32_t s = f.offsets[b], e = f.offsets[b + 1]; s < e; ++s) {
+                        const uint32_t j = f.sorted[s];
                         if ((int)j == i) continue;
                         const float4 qj = f.pos[j];
                         const float3 q = xyz(qj);
@@ -202,8 +256,8 @@ __global__ void decide(Flock f, float time) {
                     const int3 cell = make_int3(cx, cy, cz);
                     if (!cell_intersects_sphere(cell, p, r2)) continue;
                     const uint32_t b = bucket_of(cell, mask);
-                    for (uint32_t s = f.range_start[b], e = f.range_end[b]; s < e; ++s) {
-                        const uint32_t j = f.idx_sorted[s];
+                    for (uint32_t s = f.offsets[b], e = f.offsets[b + 1]; s < e; ++s) {
+                        const uint32_t j = f.sorted[s];
                         if ((int)j == i) continue;
                         const float3 q = xyz(f.pos[j]);
                         const int3 cq = cell_of(q);
@@ -350,9 +404,10 @@ int main(int argc, char** argv) {
     f.pos = dalloc<float4>(n); f.vel = dalloc<float4>(n); f.steer = dalloc<float4>(n);
     f.roll = dalloc<float>(n); f.spin = dalloc<float>(n); f.radius = dalloc<float>(n);
     f.next_decision = dalloc<float>(n); f.centrality = dalloc<float>(n); f.neighbours = dalloc<uint32_t>(n);
-    f.key_in = dalloc<uint32_t>(n); f.key_sorted = dalloc<uint32_t>(n);
-    f.idx_in = dalloc<uint32_t>(n); f.idx_sorted = dalloc<uint32_t>(n);
-    f.range_start = dalloc<uint32_t>(f.buckets); f.range_end = dalloc<uint32_t>(f.buckets);
+    const uint32_t scan_blocks = f.buckets / SCAN_BLOCK;  // buckets is a power of two >= 2^16
+    f.bucket = dalloc<uint32_t>(n); f.sorted = dalloc<uint32_t>(n);
+    f.counts = dalloc<uint32_t>(f.buckets); f.offsets = dalloc<uint32_t>(f.buckets + 1);
+    f.block_sums = dalloc<uint32_t>(scan_blocks);
 
     {  // upload: file words -> device arrays
         std::vector<float4> pos(n), vel(n), steer(n);
@@ -379,16 +434,10 @@ int main(int argc, char** argv) {
         CK(cudaMemcpy(f.neighbours, nb.data(), n * 4, cudaMemcpyHostToDevice));
     }
 
-    const int bits = (int)std::log2((double)f.buckets);
-    size_t tmp_bytes = 0;
-    CK(cub::DeviceRadixSort::SortPairs(nullptr, tmp_bytes, f.key_in, f.key_sorted, f.idx_in, f.idx_sorted, n, 0, bits));
-    void* tmp = nullptr;
-    CK(cudaMalloc(&tmp, tmp_bytes));
-
     const int TB = 256;
     const int blocks = (n + TB - 1) / TB;
-    enum { P_KEYS, P_SORT, P_RANGES, P_DECIDE, P_INTEGRATE, NPASS };
-    const char* names[NPASS] = {"grid_keys", "grid_sort", "grid_ranges", "decide", "integrate"};
+    enum { P_HISTOGRAM, P_SCAN, P_SCATTER, P_DECIDE, P_INTEGRATE, NPASS };
+    const char* names[NPASS] = {"grid_histogram", "grid_scan", "grid_scatter", "decide", "integrate"};
     std::vector<cudaEvent_t> ev((size_t)(steps) * (NPASS + 1));
     for (auto& e : ev) CK(cudaEventCreate(&e));
 
@@ -397,13 +446,14 @@ int main(int argc, char** argv) {
         cudaEvent_t* e = &ev[(size_t)s * (NPASS + 1)];
         time += DT;
         CK(cudaEventRecord(e[0]));
-        grid_keys<<<blocks, TB>>>(f);
+        CK(cudaMemsetAsync(f.counts, 0, f.buckets * 4));
+        grid_histogram<<<blocks, TB>>>(f);
         CK(cudaEventRecord(e[1]));
-        CK(cub::DeviceRadixSort::SortPairs(tmp, tmp_bytes, f.key_in, f.key_sorted, f.idx_in, f.idx_sorted, n, 0, bits));
+        grid_scan_blocks<<<scan_blocks, SCAN_WG>>>(f);
+        grid_scan_totals<<<1, SCAN_WG>>>(f, scan_blocks);
+        grid_scan_add<<<(f.buckets + TB - 1) / TB, TB>>>(f);
         CK(cudaEventRecord(e[2]));
-        CK(cudaMemsetAsync(f.range_start, 0, f.buckets * 4));
-        CK(cudaMemsetAsync(f.range_end, 0, f.buckets * 4));
-        grid_ranges<<<blocks, TB>>>(f);
+        grid_scatter<<<blocks, TB>>>(f);
         CK(cudaEventRecord(e[3]));
         decide<<<blocks, TB>>>(f, time);
         CK(cudaEventRecord(e[4]));
@@ -427,10 +477,10 @@ int main(int argc, char** argv) {
         double sum = 0;
         std::printf("# %d timed steps (mean GPU ms per pass, CUDA events)\n", timed);
         for (int p = 0; p < NPASS; ++p) {
-            std::printf("  %-14s %9.4f\n", names[p], total[p] / timed);
+            std::printf("  %-16s %9.4f\n", names[p], total[p] / timed);
             sum += total[p] / timed;
         }
-        std::printf("  %-14s %9.4f\n  bird-steps/s   %9.0f\n", "step total", sum, n / (sum / 1000.0));
+        std::printf("  %-16s %9.4f\n  bird-steps/s     %9.0f\n", "step total", sum, n / (sum / 1000.0));
     }
 
     if (out) {

@@ -45,3 +45,45 @@ wgpu backend of *this* repo, once it implements the same core step.
 2. wgpu backend of the same core step for the like-for-like baseline.
 3. cutile-rs backend, benchmarked on a rented sm_80+ GPU.
 4. Optimisations of `decide` in the CUDA version, each its own commit and measurement.
+
+## 2026-10-20 (later): counting-sort grid, cuda-oxide port started
+
+**Changed the CUDA baseline's grid.** The first baseline sorted with
+`cub::DeviceRadixSort`. A Rust kernel cannot call CUB, and the wgpu path uses a
+hand-written histogram, scan and scatter, so the CUDA version now does the same
+(`grid_histogram`, `grid_scan` in three kernels, `grid_scatter`). Every backend
+shares one grid algorithm this way. Parity (1, 100, 1000 steps) and
+compute-sanitizer (memcheck, racecheck, initcheck) pass again.
+
+Mean ms per pass, same GPU and protocol as above, three runs each (identical to
+the digits shown): 
+
+| Birds | histogram | scan | scatter | decide |
+|---|---|---|---|---|
+| 100,000 | 0.043 | 0.068 | 0.036 | 7.41 |
+| 1,000,000 | 1.81 | 0.47 | 3.21 | 97.2 |
+
+The 183 ms outlier from the CUB runs did not reappear and is still unexplained.
+Step totals for this table are not recorded yet (the summary line was cut off
+when copying); re-run before quoting them.
+
+**cuda-oxide feasibility (answers the open question above).**
+- `cargo oxide doctor` passes on this machine once `CUDA_HOME=/opt/cuda` is set
+  (it only probes `/usr/local/cuda*`). The pinned nightly (nightly-2026-10-11)
+  was installed by rustup on first use.
+- The upstream `vecadd` example **builds and runs correctly on the GTX 1650
+  (sm_75)**. cuda-oxide is therefore usable for this project on the laptop.
+- Pinned to cuda-rust revision `e027ac324f663e8408c13c116d7dddd58d5e8daf`.
+- `ncu` and `nsys` are now installed (ncu 2026.3.1, nsys 2026.3.2).
+
+**State of `oxide/` (work in progress, does not compile yet).** The full port is
+written (all kernels and host code). The first build failed on one error:
+`cuda_core::CU_EVENT_DEFAULT` does not exist; the event flag has to come from the
+`cuda_bindings` re-export (`CUevent_flags_enum_CU_EVENT_DEFAULT`), to be located.
+More errors may follow once that one is fixed, because rustc stopped at the first
+phase. Nothing in `oxide/` has been run, so no parity or timing claim exists for it.
+Build with the `cargo-oxide` binary from a checkout of NVIDIA/cuda-rust
+(`cargo-oxide build` from `oxide/`, `CUDA_HOME=/opt/cuda`).
+
+**Next:** fix the event flag, get `oxide/` compiling, run parity against the
+oracle, then profile CUDA and oxide with `ncu` on identical inputs.

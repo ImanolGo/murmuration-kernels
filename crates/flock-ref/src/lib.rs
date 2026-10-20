@@ -4,4 +4,5 @@ pub mod model;
 pub mod params;
 pub mod state;
 
+pub use glam::Vec3;
 pub use state::{Bird, Flock};

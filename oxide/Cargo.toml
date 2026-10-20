@@ -1,0 +1,18 @@
+[package]
+name = "flock-oxide"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "The flock core step as cuda-oxide (SIMT in Rust) kernels"
+
+# A standalone workspace: cuda-oxide needs its pinned nightly toolchain and the
+# `cargo oxide` driver, so this crate is built apart from the stable workspace.
+[workspace]
+
+[dependencies]
+# Pinned to the cuda-rust revision this was developed against (2026-10-20).
+cuda-device = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "e027ac324f663e8408c13c116d7dddd58d5e8daf" }
+cuda-host = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "e027ac324f663e8408c13c116d7dddd58d5e8daf" }
+cuda-core = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "e027ac324f663e8408c13c116d7dddd58d5e8daf" }
+flock-ref = { path = "../crates/flock-ref" }
+libm = "0.2"
