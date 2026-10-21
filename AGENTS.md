@@ -1,4 +1,4 @@
-# AGENTS.md: rules for working in flock-four-ways
+# AGENTS.md: rules for working in murmuration-kernels
 
 Read `docs/SPEC.md` first. This repo compares GPU programming models on one
 fixed workload (a reduced starling-flock step).

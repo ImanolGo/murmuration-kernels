@@ -3,3 +3,6 @@
 /data
 *.flk
 /cutile/out
+/upstream-repros/*/target
+/upstream-repros/*/*.ptx
+/upstream-repros/*/*.ll

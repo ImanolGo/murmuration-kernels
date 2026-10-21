@@ -115,4 +115,4 @@ The wgpu gap changed with the GPU, from a few percent to about a quarter, and I 
 
 ## Reproduce
 
-Everything is in the `flock-four-ways` repository: the CPU reference, one backend per directory, `scripts/parity.sh` for the checks, and `scripts/cloud-session.sh` for the rented-GPU run. The raw logs, the four Nsight reports and a README for them are in `docs/results/rtx4000ada-2026-10-21/`, and `docs/progress.md` has the dated log of every step, including the ones that went wrong. [TODO: add the public link when the repository is published.]
+Everything is in the [`murmuration-kernels`](https://github.com/ImanolGo/murmuration-kernels) repository: the CPU reference, one backend per directory, `scripts/parity.sh` for the checks, and `scripts/cloud-session.sh` for the rented-GPU run. The raw logs, the four Nsight reports and a README for them are in `docs/results/rtx4000ada-2026-10-21/`, and `docs/progress.md` has the dated log of every step, including the ones that went wrong.

@@ -1,13 +1,18 @@
-# flock-four-ways
+# murmuration-kernels
 
 One starling-flock step, written four ways on the GPU: CUDA C++, cuda-oxide
 (SIMT in Rust), cuTile Rust (tile model) and wgpu. The point is to compare the
 programming models on the same workload, with a CPU oracle, parity checks and
 profiler evidence, and to say where each model helps or gets in the way.
 
-> **Status: work in progress.** The CPU oracle and the CUDA C++, cuda-oxide, wgpu and cuTile
-> Rust backends all work and agree with each other. Results exist for two GPUs (a GTX 1650 and
-> an RTX 4000 Ada), and the article is in [docs/ARTICLE.md](docs/ARTICLE.md).
+The article, with the method and every caveat, is [docs/ARTICLE.md](docs/ARTICLE.md). The short version, on an
+RTX 4000 Ada: for the neighbour-search kernel that takes nearly all the time, cuda-oxide and wgpu land about 30 %
+behind CUDA C++, and cuTile Rust is 2.1-2.5x slower once tuned (4.5-5.4x at its defaults), while its regular
+passes are faster. That is one workload, two GPUs and one early revision of NVIDIA's cuda-rust, so read the
+numbers as a snapshot.
+
+> **Status:** the CPU oracle and the CUDA C++, cuda-oxide, wgpu and cuTile Rust backends all work and agree
+> with each other. Results exist for a GTX 1650 and an RTX 4000 Ada.
 
 The workload is a reduced version of the model in
 [murmuration-gpu](https://github.com/ImanolGo/murmuration-gpu): a spatial-hash
