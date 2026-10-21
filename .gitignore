@@ -2,3 +2,4 @@
 /cuda/build
 /data
 *.flk
+/cutile/out

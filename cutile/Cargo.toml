@@ -1,0 +1,16 @@
+[package]
+name = "flock-cutile"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "The flock core step as cuTile Rust (tile model) kernels"
+
+# Standalone workspace: depends on NVIDIA's cuda-rust at a pinned revision and
+# needs the CUDA 13.2+ headers at build time (CUDA_TOOLKIT_PATH). `tileiras` is
+# needed for the offline check; a GPU with compute capability >= 8.0 only to run.
+[workspace]
+
+[dependencies]
+cutile = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "e027ac324f663e8408c13c116d7dddd58d5e8daf" }
+cutile-compiler = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "e027ac324f663e8408c13c116d7dddd58d5e8daf" }
+flock-ref = { path = "../crates/flock-ref" }
