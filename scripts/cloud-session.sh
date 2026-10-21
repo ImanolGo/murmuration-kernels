@@ -65,12 +65,14 @@ for n in 100000 1000000; do
     step bench-cuda-$n-$r   "$CUDA_BIN"   --in data/s$n.flk --steps 40 --warmup 20
     step bench-oxide-$n-$r  "$OXIDE_BIN"  --in data/s$n.flk --steps 40 --warmup 20
     step bench-cutile-$n-$r "$CUTILE_BIN" --in data/s$n.flk --steps 40 --warmup 20
+    # the same binary with the occupancy hint found best on 2026-10-21 (docs/progress.md)
+    step bench-cutiletuned-$n-$r env FLOCK_CUTILE_OCC=10 "$CUTILE_BIN" --in data/s$n.flk --steps 40 --warmup 20
   done
 done
 
 # 3. Nsight Compute: one warmed-up decide launch per backend at 100k birds
-for b in cuda oxide cutile; do
-  bin_var=${b^^}_BIN; bin=${!bin_var}
+for b in cuda oxide cutile cutiletuned; do
+  case $b in cutiletuned) bin=$CUTILE_BIN; export FLOCK_CUTILE_OCC=10;; *) bin_var=${b^^}_BIN; bin=${!bin_var}; unset FLOCK_CUTILE_OCC;; esac
   step ncu-$b ncu --kernel-name regex:decide --launch-skip 22 --launch-count 1 --set full -f \
       -o "$OUT/ncu-$b-100k" "$bin" --in data/s100000.flk --steps 24
 done
@@ -87,7 +89,7 @@ metrics = ",".join([
     "sm__throughput.avg.pct_of_peak_sustained_elapsed",
 ])
 cols = {}
-for b in ("cuda", "oxide", "cutile"):
+for b in ("cuda", "oxide", "cutile", "cutiletuned"):
     import glob  # the extension is .ncu-rep or .ncu-repz depending on the ncu version
     path = (glob.glob(f"{out}/ncu-{b}-100k.ncu-rep*") or [f"{out}/ncu-{b}-100k.ncu-rep"])[0]
     r = subprocess.run(["ncu", "-i", path, "--page", "raw", "--csv", "--metrics", metrics],
