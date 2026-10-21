@@ -27,8 +27,11 @@ Hopper, or anything about performance.
 ssh-keygen -t ed25519 -N "" -C vast-flock-throwaway -f ~/.ssh/vast_flock
 vastai create ssh-key "$(cat ~/.ssh/vast_flock.pub)"      # pass the key TEXT, see gotcha 1
 
-# find a VM-capable offer (sm_80-89, driver supporting CUDA >= 13.2), cheapest first
-vastai search offers 'num_gpus=1 compute_cap>=800 compute_cap<=890 vms_enabled=true reliability>0.98 cuda_vers>=13.2 disk_space>=50 inet_down>200 dph<1.2' -o dph
+# find a VM-capable offer (sm_80-89), cheapest first. Do NOT filter on cuda_vers or
+# driver_version: a VM installs its own driver (580 worked with toolkit 13.3), and on
+# 2026-10-21 that filter alone removed every offer.
+vastai search offers 'num_gpus=1 compute_cap>=800 compute_cap<=890 vms_enabled=true reliability>0.95 disk_space>=50 dph<1.0' -o dph
+# offers are rented by others between search and create ("no_such_ask"): have a second ready
 
 # rent it: Vast's recommended "Ubuntu 22.04 VM" template
 vastai create instance OFFER_ID --template_hash fc393e1a4058a2f2b88e0c0e1a92e540 --disk 60 --label flock --cancel-unavail
