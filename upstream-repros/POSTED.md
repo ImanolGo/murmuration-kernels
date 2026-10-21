@@ -11,6 +11,7 @@ project's bug-report template and carry an "AI contribution" line, as the projec
 | [Issue #1595](https://github.com/NVIDIA/cuda-rust/issues/1595) | cuda-oxide: `f32::to_int_unchecked` fails with "invalid input program" | `oxide-to-int-unchecked` |
 | [Issue #1596](https://github.com/NVIDIA/cuda-rust/issues/1596) | cuTile: a `PointerTile` method chain fails to infer its type | `cutile-dsl-friction`, `ptr_chain` |
 | [Issue #1597](https://github.com/NVIDIA/cuda-rust/issues/1597) | The `PointerTile` examples in `dsl-api.md` do not type-check | `cutile-dsl-friction`, `--features docs-snippet` |
+| [PR #1599](https://github.com/NVIDIA/cuda-rust/pull/1599) | The documentation fix for #1597 (two examples in `dsl-api.md`), from a fork; the corrected form is the `docs_fixed` kernel | `cutile-dsl-friction`, `docs_fixed` |
 
 Already reported before this project found them: `constant(false)` is [#1469](https://github.com/NVIDIA/cuda-rust/issues/1469)
 (fix in #1470), and the generic-helper problem is #1378. Two things were checked and ruled out as duplicates of other items:
