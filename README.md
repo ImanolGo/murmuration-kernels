@@ -1,5 +1,7 @@
 # murmuration-kernels
 
+![murmuration-kernels: one starling-flock step in CUDA C++, cuda-oxide, wgpu and cuTile Rust. Neighbour-search time per step at 100,000 birds on an RTX 4000 Ada: CUDA C++ 1.24 ms, wgpu 1.54, cuda-oxide 1.64, cuTile Rust tuned 2.59, cuTile Rust defaults 5.57.](docs/img/hero.png)
+
 One starling-flock step, written four ways on the GPU: CUDA C++, cuda-oxide
 (SIMT in Rust), cuTile Rust (tile model) and wgpu. The point is to compare the
 programming models on the same workload, with a CPU oracle, parity checks and
