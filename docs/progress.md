@@ -87,3 +87,63 @@ Build with the `cargo-oxide` binary from a checkout of NVIDIA/cuda-rust
 
 **Next:** fix the event flag, get `oxide/` compiling, run parity against the
 oracle, then profile CUDA and oxide with `ncu` on identical inputs.
+
+## 2026-10-21: cuda-oxide port compiles, passes parity, first comparison
+
+**Fixed and run.** The event flag lives at `cuda_core::sys::CUevent_flags_enum_CU_EVENT_DEFAULT`
+(`cuda_core::sys` re-exports the bindings); after that the whole port built for
+sm_75 with no further errors. A second bug was in my host timing code (event
+stride), not in the kernels. `/tmp` was cleared by a reboot, so the cuda-rust
+checkout was re-cloned at the pinned revision `e027ac3`.
+
+**Correctness.** Against the CPU oracle on the same 2000-bird start the oxide
+port gives *the same* errors as the CUDA C++ version: max |dpos| 4.768e-7 after 1
+step and 7.629e-6 after 100, zero neighbour-count mismatches, and the 1000-step
+aggregates pass (`BACKEND=oxide scripts/parity.sh`). `compute-sanitizer` memcheck: 0 errors.
+
+**Speed** (GTX 1650 Max-Q, sm_75, driver 615.78.08, CUDA 13.4, seed 1, 20 warm-up +
+20 timed steps, mean ms from CUDA events, three runs each unless noted):
+
+| Birds | CUDA C++ `decide` | oxide `decide`, default | oxide, `launch_bounds(256, 4)` |
+|---|---|---|---|
+| 100,000 | 7.41 (7.41, 7.41, 7.42) | 9.17-9.65 (9.65, 9.17, 9.17) | 8.18-8.40 (8.40, 8.19, 8.18) |
+| 1,000,000 | 97.2 (3 runs) | 106.3-106.5 (3 runs) | 100.9 (2 runs) |
+
+Step totals, default oxide vs CUDA: 100k 9.41-9.90 vs 7.65-7.66 ms; 1M 112.8-113.0
+vs 103.7 ms. The grid kernels (histogram, scatter) and `integrate` take the same
+time on both; only `decide` differs.
+
+**Why `decide` differs: registers, shown three ways.**
+1. Registers per thread of the kernels *as loaded* (Nsight Systems kernel table,
+   no profiler counters needed): `decide` 61 (CUDA) vs 72 (oxide), `integrate`
+   46 vs 53. Neither spills by default.
+2. On Turing, 61 registers allow 4 blocks of 256 threads per SM (100 %), 72 allow
+   3 (75 %). The oxide `decide` also has ~9 % more SASS instructions (1400 vs 1280,
+   from `ptxas` on `cargo oxide inspect` PTX; the runtime JIT path may differ).
+3. Experiment: the CUDA kernel, unchanged, launched with 20 KB of dynamic shared
+   memory so only 3 blocks fit per SM (`--decide-smem 20480`, occupancy printed by
+   the program): **9.30 ms at 100k** (oxide 9.17-9.65) and **108.7 ms at 1M** (oxide
+   106.4). With occupancy matched, the two compilers' code runs equally fast; the gap
+   is the register allocation, not the code.
+
+`#[launch_bounds(256, 4)]` on the oxide kernel (the `__launch_bounds__(256, 4)`
+equivalent) recovers about half the gap: it caps registers at 64 by spilling 48 bytes
+(`ptxas`: 48 bytes spill stores, 52 loads), so it is still ~10 % slower than CUDA
+at 100k and ~4 % at 1M. This is a measured result on one GPU, one workload, one
+cuda-oxide revision. It says nothing about newer compilers or other architectures.
+
+**Not yet measured.** Nsight Compute cannot read the GPU counters as a normal user
+(`ERR_NVGPUCTRPERM`), so there is no achieved-occupancy, memory-throughput or
+roofline data yet. Enabling it is a system change (run `ncu` under `sudo`, or set
+the driver option `NVreg_RestrictProfilingToAdminUsers=0` and reboot): ask first.
+The occupancy explanation above is supported by the experiment, not by counters.
+
+**Safety, as written** (rough, not a claim about the borrow checker): the
+oxide kernels use `DisjointSlice` for every per-thread output and `&[T]` for reads;
+the grid scan and scatter need raw pointers. `oxide/src/main.rs` has 18 lines that
+mention `unsafe` (comments and SAFETY notes included), `cuda/flock.cu` has none,
+because C++ has no equivalent marker. A fair count of unsafe *operations* needs
+a proper pass.
+
+**Next:** wgpu backend of the same step (the like-for-like portable baseline),
+then cutile-rs on a rented sm_80+ GPU. Open: counters for Nsight Compute.

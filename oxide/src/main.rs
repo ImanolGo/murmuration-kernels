@@ -10,7 +10,7 @@
 use cuda_core::simt::LaunchConfig;
 use cuda_core::{CudaContext, DeviceBuffer, DeviceCopy};
 use cuda_device::atomic::{AtomicOrdering, DeviceAtomicU32};
-use cuda_device::{DisjointSlice, SharedArray, kernel, thread};
+use cuda_device::{DisjointSlice, SharedArray, kernel, launch_bounds, thread};
 use cuda_host::cuda_module;
 
 use flock_ref::params::*;
@@ -294,6 +294,7 @@ mod kernels {
     /// Mirrors flock-ref `model::decide`. Reads positions and velocities (only
     /// `integrate` writes them) and updates only this bird's own decision fields.
     #[kernel]
+    #[launch_bounds(256, 4)]
     pub fn decide(
         pos: &[F4],
         vel: &[F4],
@@ -573,8 +574,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut offsets = DeviceBuffer::<u32>::zeroed(&stream, buckets as usize + 1)?;
     let mut block_sums = DeviceBuffer::<u32>::zeroed(&stream, scan_blocks)?;
 
-    // SAFETY: this package owns the embedded device bundle for `kernels`.
-    let module = unsafe { kernels::load(&ctx)? };
+    let module = kernels::load(&ctx)?;
     let tb = 256u32;
     let cfg = |threads: usize| LaunchConfig::for_num_elems(threads as u32);
     let cfg_blocks = |blocks: usize, threads: u32| LaunchConfig {
@@ -585,8 +585,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = tb;
 
     const PASSES: [&str; 5] = ["grid_histogram", "grid_scan", "grid_scatter", "decide", "integrate"];
-    let timing = Some(cuda_core::CU_EVENT_DEFAULT);
-    let mut events = Vec::with_capacity(steps * (PASSES.len() + 1));
+    let timing = Some(cuda_core::sys::CUevent_flags_enum_CU_EVENT_DEFAULT);
+    let mut events = Vec::with_capacity(steps * PASSES.len() + 1);
     let mut time = start.time;
     let mask = buckets - 1;
 
@@ -629,7 +629,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if timed > 0 {
         let mut total = [0f64; 5];
         for s in warmup..steps {
-            let e = &events[s * (PASSES.len() + 1)..(s + 1) * (PASSES.len() + 1) + 1];
+            // Step s owns events s*5 ..= s*5+5; the last one is the next step's first (or the final) event.
+            let e = &events[s * PASSES.len()..=(s + 1) * PASSES.len()];
             for p in 0..PASSES.len() {
                 total[p] += e[p].elapsed_ms(&e[p + 1])? as f64;
             }

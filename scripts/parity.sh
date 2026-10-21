@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # CPU oracle vs the CUDA baseline on the same start. Needs a GPU.
 #   scripts/parity.sh [birds]      (default 2000; the CPU side is brute force)
+#   BACKEND=oxide scripts/parity.sh   uses oxide/target/release/flock-oxide, which
+#                                     must be built first (see README, "Run it")
 # Pointwise agreement is required at 1 and 100 steps (tolerance 1e-3 on position
 # and velocity, no neighbour-count mismatch). At 1000 steps only the aggregate
 # statistics are compared, because the flock amplifies rounding differences.
@@ -9,9 +11,10 @@ cd "$(dirname "$0")/.."
 N=${1:-2000}
 R=target/release/flock-ref
 C=cuda/build/flock_cuda
+[ "${BACKEND:-cuda}" = oxide ] && C=oxide/target/release/flock-oxide
 mkdir -p data
 cargo build --release -q
-make -s -C cuda
+[ "${BACKEND:-cuda}" = oxide ] || make -s -C cuda
 $R gen --birds "$N" --seed 1 --out "data/p$N.flk"
 status=0
 for K in 1 100 1000; do

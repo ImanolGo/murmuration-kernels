@@ -374,6 +374,7 @@ static uint32_t buckets_for(int n) {
 int main(int argc, char** argv) {
     const char *in = nullptr, *out = nullptr;
     int steps = 1, warmup = 0;
+    size_t decide_smem = 0;  // experiment only: dynamic shared memory reserved to cap decide's occupancy
     for (int k = 1; k < argc; ++k) {
         std::string a = argv[k];
         auto val = [&]() -> const char* { if (k + 1 >= argc) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); std::exit(2); } return argv[++k]; };
@@ -381,6 +382,7 @@ int main(int argc, char** argv) {
         else if (a == "--out") out = val();
         else if (a == "--steps") steps = std::atoi(val());
         else if (a == "--warmup") warmup = std::atoi(val());
+        else if (a == "--decide-smem") decide_smem = (size_t)std::atol(val());
         else { std::fprintf(stderr, "usage: flock_cuda --in FILE [--steps K] [--warmup W] [--out FILE]\n(the first W steps are not timed)\n"); return 2; }
     }
     if (!in) { std::fprintf(stderr, "missing --in\n"); return 2; }
@@ -435,6 +437,12 @@ int main(int argc, char** argv) {
     }
 
     const int TB = 256;
+    {
+        int active = 0;
+        CK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&active, decide, TB, decide_smem));
+        std::printf("# decide occupancy: %d blocks/SM of %d threads = %d%% of %d threads/SM (dynamic smem %zu B)\n", active, TB,
+                    100 * active * TB / prop.maxThreadsPerMultiProcessor, prop.maxThreadsPerMultiProcessor, decide_smem);
+    }
     const int blocks = (n + TB - 1) / TB;
     enum { P_HISTOGRAM, P_SCAN, P_SCATTER, P_DECIDE, P_INTEGRATE, NPASS };
     const char* names[NPASS] = {"grid_histogram", "grid_scan", "grid_scatter", "decide", "integrate"};
@@ -455,7 +463,7 @@ int main(int argc, char** argv) {
         CK(cudaEventRecord(e[2]));
         grid_scatter<<<blocks, TB>>>(f);
         CK(cudaEventRecord(e[3]));
-        decide<<<blocks, TB>>>(f, time);
+        decide<<<blocks, TB, decide_smem>>>(f, time);
         CK(cudaEventRecord(e[4]));
         integrate<<<blocks, TB>>>(f);
         CK(cudaEventRecord(e[5]));
