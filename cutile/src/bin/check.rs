@@ -7,7 +7,11 @@ use cutile_compiler::compile_api::KernelCompiler;
 use flock_cutile::flock_kernels;
 
 /// (kernel name, generic arguments, stride arguments) for every entry point.
-type Spec = (&'static str, Vec<String>, Vec<(&'static str, &'static [i32])>);
+type Spec = (
+    &'static str,
+    Vec<String>,
+    Vec<(&'static str, &'static [i32])>,
+);
 
 fn specs() -> Vec<Spec> {
     let b: Vec<String> = vec![];
@@ -32,13 +36,22 @@ fn specs() -> Vec<Spec> {
         ("grid_scatter", vec![], vec![("bucket", &[1])]),
         ("decide", vec![], vec![]),
         (
-        "integrate",
-        b,
-        vec![
-            ("px", &[1]), ("py", &[1]), ("pz", &[1]), ("vx", &[1]), ("vy", &[1]), ("vz", &[1]),
-            ("roll", &[1]), ("spin", &[1]), ("sx", &[1]), ("sy", &[1]), ("sz", &[1]),
-        ],
-    ),
+            "integrate",
+            b,
+            vec![
+                ("px", &[1]),
+                ("py", &[1]),
+                ("pz", &[1]),
+                ("vx", &[1]),
+                ("vy", &[1]),
+                ("vz", &[1]),
+                ("roll", &[1]),
+                ("spin", &[1]),
+                ("sx", &[1]),
+                ("sy", &[1]),
+                ("sz", &[1]),
+            ],
+        ),
     ]
 }
 

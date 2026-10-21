@@ -6,8 +6,9 @@ programming models on the same workload, with a CPU oracle, parity checks and
 profiler evidence, and to say where each model helps or gets in the way.
 
 > **Status: work in progress.** The CPU oracle and the CUDA C++, cuda-oxide and wgpu
-> backends work and agree. cuTile Rust is not started (it needs an sm_80+ GPU), so
-> this is not a finished comparison yet.
+> backends work and agree. The cuTile Rust backend is written and compiles to sm_89
+> machine code, but has **not run yet** (it needs an sm_80+ GPU), so there is no cuTile
+> result and this is not a finished comparison.
 
 The workload is a reduced version of the model in
 [murmuration-gpu](https://github.com/ImanolGo/murmuration-gpu): a spatial-hash
@@ -22,7 +23,7 @@ what is left out.
 | CPU oracle (Rust) | done | brute-force neighbours |
 | CUDA C++ | baseline done | unoptimised, passes parity |
 | cuda-oxide (SIMT, Rust) | done, passes parity | runs on sm_75; `decide` 4-24 % slower depending on tuning, see below |
-| cuTile Rust | not started | needs sm_80+ |
+| cuTile Rust | written, compiles for sm_89, **not run** | needs sm_80+; `scripts/cloud-session.sh` runs it |
 | wgpu (WGSL) | done, passes parity | within ~7 % of CUDA C++ on this GPU |
 
 ## First numbers

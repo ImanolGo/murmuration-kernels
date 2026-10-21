@@ -254,3 +254,71 @@ the wgpu backend.
 **Next:** cuTile Rust needs an sm_80+ GPU (rent one; compare against CUDA and
 oxide on the same GPU, and re-profile there). Then a write-up. Open: the two possible
 upstream issues (min/max lowering; `to_int_unchecked`).
+
+## 2026-10-21 (night): cuTile Rust backend written, not yet run
+
+`cutile/` (standalone crate, cuda-rust pinned at `e027ac3`): eight kernels (`grid_clear`,
+`grid_histogram`, `grid_scan_blocks/totals/add`, `grid_scatter`, `decide`, `integrate`) and
+a host runner with the same command line and `.flk` files as the other backends.
+`decide` is generated from a template (`tools/gen_decide.py`, output committed) because
+the DSL cannot share a loop body between the two neighbourhood walks.
+
+**What is verified.** Every kernel lowers from the Rust DSL to Tile IR and to an sm_89 cubin
+on the laptop, with no GPU, using `cutile_compiler::compile_api::KernelCompiler` and
+`tileiras` (`cargo run --bin check -- --arch sm_89 --cubin-dir out`). The runner builds
+clean (`clippy` has no warnings). On the laptop's sm_75 GPU it stops at the first kernel
+with `cuda_tile.make_token requires sm_80 or newer`, as expected. A `--check` mode
+validates the spatial grid (offsets monotone, `offsets[buckets] = n`, `sorted` a
+permutation, each bird in its bucket's range); its checker has unit tests.
+**Nothing has executed on a GPU, so there is no parity or timing result.**
+
+**Static resources, sm_89, both compiled by their vendor tools** (registers per thread from
+`cuobjdump --dump-resource-usage`; SASS instruction counts not compared because the CUDA
+count for sm_89 was not reliably extracted):
+
+| Kernel | CUDA C++ | cuTile Rust |
+|---|---|---|
+| decide | 62 regs | **246 regs**, 16 B shared, no spills |
+| integrate | 40 regs, 32 B stack | 46 regs, 32 B stack |
+| grid_histogram / scatter / scan_add / clear | 12-14 regs | 8-12 regs |
+| grid_scan_blocks / totals | 20 regs, 1 KB shared | **128 / 124 regs, 8 KB shared** |
+
+The cuTile `decide` is 4,064 SASS instructions (static). The threads per block the
+assembler picks (`EIATTR_REQNTID`) was not decoded; the profiler will report it. Register
+count and achieved occupancy are the things to look at first when it runs: 246 registers
+per thread allows few resident warps.
+
+**How the tile model changed the algorithm** (a finding in itself, not an optimisation):
+- A tile of 128 birds is one program. The per-bird neighbour loops have data-dependent trip
+  counts, which a tile program cannot express, so each walk iterates to the **largest cell
+  span and bucket size in the tile**, with every lane masked. Lanes with fewer candidates
+  idle while the busiest finishes. CUDA has the same divergence within a warp of 32; here
+  it spans 128 lanes.
+- Neighbour data are read with masked pointer gathers (`load_ptr_tko`), one per field and
+  candidate; CUDA reads one `float4`. Positions and velocities are separate arrays.
+- The scan is simpler: `scan_sum` does the in-block prefix scan in three lines per kernel,
+  with no hand-written shared-memory loop. Histogram and scatter use pointer-tile atomics.
+
+**DSL limits met while writing it** (cuda-rust `e027ac3`; each one cost an iteration):
+1. No `atan` or `atan2` in the DSL (`sin`, `cos`, `tan`, `exp`, `pow`, `floor`, `sqrt` exist).
+   `integrate` needs `atan` for the bank target, so it carries a Cephes polynomial
+   (about 1e-7 error, three comparisons and selects). Parity will show whether that is enough.
+2. A user device function's return type is inferred only from a typed `let`, never from an
+   argument position; every helper call is bound to an annotated `let`.
+3. A **generic** device function (`fn f<const B: i32>`) returns a type with its `B` unsubstituted,
+   and a module `const` is not evaluated inside a type `{ [B] }`. The tile size is therefore the
+   literal `128` everywhere; changing it means editing the source.
+4. `constant(x, shape)` needs a literal; a variable needs `broadcast_scalar`.
+5. `PointerTile::broadcast` keeps the rank, and the `reshape` *method* did not compile
+   ("return type is missing a compiled tile type"). The free functions `reshape_ptr` and
+   `broadcast_ptr` work. The reference's snippet (`ptr.broadcast(shape![128])` from a scalar
+   pointer) does not type-check.
+6. Mutable tensors, `scan_sum`, `reduce_max`, `tile_to_scalar` loop bounds, nested `for` loops with
+   a dozen carried tiles, and masked atomics all compiled without trouble.
+
+**Cloud session, prepared.** `scripts/cloud-session.sh` (after `scripts/remote-setup.sh`)
+builds CUDA, oxide and cuTile on the VM, runs the grid check and parity for cuTile
+(1, 10, 30, 100, 1000 steps), benchmarks all three with one protocol, profiles each `decide`
+kernel with Nsight Compute, and bundles the results. Estimated 25-40 minutes on a
+~$0.4/h VM, under $1 including setup. Not yet run: expect the first GPU execution of the
+cuTile kernels to need debugging.
