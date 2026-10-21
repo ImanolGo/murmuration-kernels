@@ -21,7 +21,7 @@ what is left out.
 |---|---|---|
 | CPU oracle (Rust) | done | brute-force neighbours |
 | CUDA C++ | baseline done | unoptimised, passes parity |
-| cuda-oxide (SIMT, Rust) | done, passes parity | runs on sm_75; `decide` 10-24 % slower, see below |
+| cuda-oxide (SIMT, Rust) | done, passes parity | runs on sm_75; `decide` 4-24 % slower depending on tuning, see below |
 | cuTile Rust | not started | needs sm_80+ |
 | wgpu | not started | |
 
@@ -35,11 +35,13 @@ timed steps, mean GPU time of `decide` (96-98 % of the step) from CUDA events:
 | 100,000 | 7.4 ms | 9.2-9.7 ms | 8.2-8.4 ms |
 | 1,000,000 | 97 ms | 106 ms | 101 ms |
 
-The grid and integrate kernels take the same time in both. The `decide` gap comes
-from register allocation: 72 registers against 61, so 3 blocks per SM instead of 4.
-Launching the CUDA kernel at the same 75 % occupancy gives 9.3 ms and 109 ms, i.e.
-the same speed as oxide. Details, caveats and what is not measured yet (no
-profiler counters) are in [docs/progress.md](docs/progress.md).
+The grid and integrate kernels take the same time in both. Nsight Compute shows
+why `decide` differs: memory behaviour is identical, but oxide uses 72 registers
+against 61 (75 % instead of 100 % occupancy; `launch_bounds` fixes that) and, even
+at equal occupancy, **executes 77 % more instructions** (bounds checks explain about
+a fifth; float min/max compile to compare-and-select instead of the hardware
+instruction). The kernel is latency-bound, so that costs 14 %, not 77 %.
+Details, caveats and what is not tested are in [docs/progress.md](docs/progress.md).
 
 ## Run it
 

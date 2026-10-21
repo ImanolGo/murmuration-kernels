@@ -24,6 +24,31 @@ pub struct F4(pub [f32; 4]);
 // SAFETY: four f32 with no padding; every bit pattern is a valid value.
 unsafe impl DeviceCopy for F4 {}
 
+/// Slice read: bounds-checked by default, unchecked with `--features unchecked`
+/// (the neighbour loops index five slices per candidate).
+#[cfg(feature = "unchecked")]
+macro_rules! at {
+    ($s:expr, $i:expr) => {
+        // SAFETY: indices come from the grid, which is built from `n` birds and
+        // `buckets + 1` offsets; the parity run checks the results.
+        unsafe { *$s.get_unchecked($i) }
+    };
+}
+#[cfg(not(feature = "unchecked"))]
+macro_rules! at {
+    ($s:expr, $i:expr) => {
+        $s[$i]
+    };
+}
+
+/// Cell coordinate from a float. `f32 as i32` saturates and maps NaN to 0 in Rust;
+/// `f32::to_int_unchecked` would drop that, but the cuda-oxide backend rejects it
+/// (checked 2026-10-21: "invalid input program" in core/src/convert/num.rs).
+#[inline(always)]
+fn f2i(x: f32) -> i32 {
+    x as i32
+}
+
 const SCAN_WG: usize = 256;
 const SCAN_EPT: usize = 8;
 const SCAN_BLOCK: usize = SCAN_WG * SCAN_EPT;
@@ -133,9 +158,9 @@ fn body_up(f: V3, beta: f32) -> V3 {
 #[inline(always)]
 fn cell_of(p: V3) -> (i32, i32, i32) {
     (
-        libm::floorf(p.x * INV_CELL) as i32,
-        libm::floorf(p.y * INV_CELL) as i32,
-        libm::floorf(p.z * INV_CELL) as i32,
+        f2i(libm::floorf(p.x * INV_CELL)),
+        f2i(libm::floorf(p.y * INV_CELL)),
+        f2i(libm::floorf(p.z * INV_CELL)),
     )
 }
 
@@ -316,8 +341,8 @@ mod kernels {
         if time < *next {
             return;
         }
-        let p = V3::from4(pos[i]);
-        let v_i = V3::from4(vel[i]);
+        let p = V3::from4(at!(pos, i));
+        let v_i = V3::from4(at!(vel, i));
         let r = *rad;
         let f_i = forward_of(v_i);
 
@@ -341,13 +366,13 @@ mod kernels {
                             continue;
                         }
                         let b = bucket_of(cell, mask) as usize;
-                        let (s0, s1) = (offsets[b] as usize, offsets[b + 1] as usize);
+                        let (s0, s1) = (at!(offsets, b) as usize, at!(offsets, b + 1) as usize);
                         for s in s0..s1 {
-                            let j = sorted[s] as usize;
+                            let j = at!(sorted, s) as usize;
                             if j == i {
                                 continue;
                             }
-                            let q = V3::from4(pos[j]);
+                            let q = V3::from4(at!(pos, j));
                             if cell_of(q) != cell {
                                 continue;
                             }
@@ -370,7 +395,7 @@ mod kernels {
                                 n_star += 1;
                             }
                             if f_i.dot(dhat) >= BLIND_COS {
-                                align = align.add(forward_of(V3::from4(vel[j])));
+                                align = align.add(forward_of(V3::from4(at!(vel, j))));
                                 n_align += 1;
                             }
                         }
@@ -400,13 +425,13 @@ mod kernels {
                             continue;
                         }
                         let b = bucket_of(cell, mask) as usize;
-                        let (s0, s1) = (offsets[b] as usize, offsets[b + 1] as usize);
+                        let (s0, s1) = (at!(offsets, b) as usize, at!(offsets, b + 1) as usize);
                         for s in s0..s1 {
-                            let j = sorted[s] as usize;
+                            let j = at!(sorted, s) as usize;
                             if j == i {
                                 continue;
                             }
-                            let q = V3::from4(pos[j]);
+                            let q = V3::from4(at!(pos, j));
                             if cell_of(q) != cell {
                                 continue;
                             }

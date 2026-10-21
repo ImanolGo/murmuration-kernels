@@ -123,8 +123,9 @@ time on both; only `decide` differs.
 3. Experiment: the CUDA kernel, unchanged, launched with 20 KB of dynamic shared
    memory so only 3 blocks fit per SM (`--decide-smem 20480`, occupancy printed by
    the program): **9.30 ms at 100k** (oxide 9.17-9.65) and **108.7 ms at 1M** (oxide
-   106.4). With occupancy matched, the two compilers' code runs equally fast; the gap
-   is the register allocation, not the code.
+   106.4). So the CUDA kernel at oxide's occupancy takes the same time as oxide.
+   *Equal times are not equal code*: the counters below show oxide executes far more
+   instructions; this kernel is latency-bound enough to hide much of that.
 
 `#[launch_bounds(256, 4)]` on the oxide kernel (the `__launch_bounds__(256, 4)`
 equivalent) recovers about half the gap: it caps registers at 64 by spilling 48 bytes
@@ -147,3 +148,61 @@ a proper pass.
 
 **Next:** wgpu backend of the same step (the like-for-like portable baseline),
 then cutile-rs on a rented sm_80+ GPU. Open: counters for Nsight Compute.
+
+## 2026-10-21 (later): Nsight Compute counters
+
+`NVreg_RestrictProfilingToAdminUsers=0` was set (modprobe option, initramfs
+rebuilt, rebooted); `ncu` now runs as a normal user. One warmed-up `decide` launch
+(launch 23 of 24), 100,000 birds, `--set full`, the raw reports are not published (they embed the machine's host name and paths). ncu locks the GPU clocks, so these
+times are higher than the benchmark's; compare columns, not against other tables.
+
+| `decide`, 100k birds | CUDA C++ | CUDA, occupancy capped to 75 % | oxide, `launch_bounds(256, 4)` |
+|---|---|---|---|
+| duration | 8.28 ms | 10.91 ms | 9.46 ms |
+| registers per thread | 61 | 61 | 64 |
+| theoretical occupancy | 100 % | 75 % | 100 % |
+| achieved active warps | 70.9 % | 50.7 % | 70.6 % |
+| instructions executed | 145.9 M | 145.9 M | **258.6 M** (+77 %) |
+| issue slots active | 23.2 % | 17.7 % | 36.2 % |
+| eligible warps per cycle | 0.29 | 0.20 | 0.50 |
+| global-load sectors | 13.60 M | 13.60 M | 13.60 M |
+| L1 / L2 hit rate | 42.8 / 25.2 % | 39.8 / 28.8 % | 42.7 / 25.6 % |
+
+What this shows, and what it does not:
+- **Memory behaviour is identical** (same sectors, same hit rates). The gap is not memory.
+- **Occupancy matters in this kernel**: capping CUDA to 75 % drops achieved warps from
+  71 % to 51 % and costs 32 % in time.
+- **With `launch_bounds(256, 4)` oxide matches CUDA's occupancy** (70.6 vs 70.9 % active
+  warps) but still runs 14 % longer, because it executes **77 % more instructions**.
+  The kernel is latency-bound (CUDA issues on 23 % of cycles), so most of the extra
+  instructions are hidden. Correction to the note above: the gap is not only registers.
+
+**Where the extra instructions come from (partly tested).**
+- *Bounds checks, tested.* Every slice index in Rust is checked. The opt-in
+  `--features unchecked` removes them in `decide` (`get_unchecked`): instructions
+  258.6 M to 235.4 M (-9 %), time 8.23 to 7.91 ms at 100k (-4 %) and 100.9 to 99.5 ms
+  at 1M (-1.4 %). Parity still passes. This explains ~20 % of the extra instructions.
+- *Float min/max, tested and refuted as the cause but real as a finding.* CUDA's
+  `fmaxf`/`fminf` become the hardware `FMNMX` (20 in `decide`); oxide's SASS has none
+  and more `FSETP` (+86), `SEL` (+56), `PLOP3` (+38), `FSEL` (+25). The generated PTX
+  has **no `min.f32` / `max.f32` at all** (141 `setp`, 153 `selp`). Replacing
+  `libm::fminf/fmaxf` with `f32::min/max` changed nothing (258.58 M vs 258.57 M
+  instructions), so both routes lower to compare-and-select. Whether that costs time
+  here was not isolated.
+- *Saturating float-to-int casts, untested.* `f32 as i32` saturates and maps NaN to 0 in
+  Rust. The obvious fix, `f32::to_int_unchecked`, is **rejected by the backend**
+  ("invalid input program" in `core/src/convert/num.rs`, build of 2026-10-21), so it
+  could not be tried. Likely related to `SEL`/`FRND` (+18) in the opcode mix; not proven.
+- 64-bit index arithmetic from `usize` indices is a further candidate. Untested.
+
+Static SASS counts (1280 CUDA vs 1400 oxide) understate the dynamic difference (+77 %):
+the extra work sits in the neighbour loops, which run many times per bird.
+
+**Housekeeping.** `cargo-oxide` is now installed in `~/.cargo/bin` from the pinned
+revision (`cargo install --git ... --rev e027ac3 cargo-oxide`); `cargo uninstall
+cargo-oxide` removes it. `/tmp` is cleared on reboot, so the cuda-rust checkout is
+no longer needed to build `oxide/`.
+
+**Possible upstream issues (not filed):** (1) float min/max lower to `setp`/`selp`, never to
+`min.f32`/`max.f32`; (2) `f32::to_int_unchecked` fails to compile. Each needs a minimal
+reproduction outside this project first, and CONTRIBUTING.md asks for an issue before a PR.

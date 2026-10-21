@@ -9,6 +9,10 @@ description = "The flock core step as cuda-oxide (SIMT in Rust) kernels"
 # `cargo oxide` driver, so this crate is built apart from the stable workspace.
 [workspace]
 
+[features]
+# Experiment: drop the slice bounds checks in `decide`.
+unchecked = []
+
 [dependencies]
 # Pinned to the cuda-rust revision this was developed against (2026-10-20).
 cuda-device = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "e027ac324f663e8408c13c116d7dddd58d5e8daf" }
