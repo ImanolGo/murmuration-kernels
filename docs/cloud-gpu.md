@@ -73,10 +73,7 @@ slow-booting host and this session: about $0.47 of the $10 credit. Notes:
 - Starting a long job over SSH with `nohup ... &` still leaves the client attached unless stdout/stderr are redirected
   *outside* the remote shell; use a detached `ssh -f` or poll a log, and never `pkill -f` a pattern that appears in your
   own command line.
-- Always re-list instances after destroying yours: another instance (not created by this project) was running on the
-  account afterwards.
+- Always re-list instances after destroying yours (`vastai show instances` must come back empty), so nothing keeps billing.
 - A fresh VM of the same host again took under 2 minutes to accept SSH. NVIDIA's apt mirror served an inconsistent index for
   about 5 minutes ("File has unexpected size ... Mirror sync in progress?"), which made `apt-get update` fail and the setup abort;
   the setup script now retries. The wgpu backend ran on the VM with only `libvulkan1` installed.
-- The account's credit also fell while none of this project's VMs were running: an instance labelled `apg` (A40, $0.589/h) that
-  this project did not create appeared during the cuTile session. Check `vastai show instances` at the end of every session.

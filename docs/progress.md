@@ -203,9 +203,11 @@ revision (`cargo install --git ... --rev e027ac3 cargo-oxide`); `cargo uninstall
 cargo-oxide` removes it. `/tmp` is cleared on reboot, so the cuda-rust checkout is
 no longer needed to build `oxide/`.
 
-**Possible upstream issues (not filed):** (1) float min/max lower to `setp`/`selp`, never to
-`min.f32`/`max.f32`; (2) `f32::to_int_unchecked` fails to compile. Each needs a minimal
-reproduction outside this project first, and CONTRIBUTING.md asks for an issue before a PR.
+**Upstream status** (everything reproduces without a GPU, see `upstream-repros/`; posted 2026-10-21): the
+`constant(false)` miscompile is cuda-rust #1469 with a fix in the open PR #1470, where a confirmation was added; the
+generic-helper problem is #1378, where a smaller example was added; new issues are float min/max lowering
+([#1594](https://github.com/NVIDIA/cuda-rust/issues/1594)), `to_int_unchecked` ([#1595](https://github.com/NVIDIA/cuda-rust/issues/1595)), the pointer-tile method chain ([#1596](https://github.com/NVIDIA/cuda-rust/issues/1596)) and the
+documentation snippet ([#1597](https://github.com/NVIDIA/cuda-rust/issues/1597)).
 
 ## 2026-10-21 (evening): wgpu backend
 
@@ -403,8 +405,7 @@ synchronised once (needed for event timing); the borrowed partition `(&mut t).pa
 `ncu` on a cuTile kernel works unmodified (kernel name `decide_entry`).
 
 **Next:** the write-up; decide what to do with the remaining cuTile instruction-count gap (a gather-layout change, `float4`-style loads, is the obvious
-experiment). Rented VMs: none of mine are running. Instance 57040734 ("apg", A40) appeared on the account during the
-session and was not created by this project.
+experiment).
 
 ## 2026-10-21 (late): wgpu on the RTX 4000 Ada
 
