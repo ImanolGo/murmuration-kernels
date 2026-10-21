@@ -42,5 +42,10 @@ nvcc -arch=native -o /root/smoke /root/smoke.cu && /root/smoke
 ncu --kernel-name axpy --launch-skip 1 --launch-count 1 \
     --metrics gpu__time_duration.sum,sm__warps_active.avg.pct_of_peak_sustained_active /root/smoke 2>&1 \
   | grep -E "ERR|duration|warps_active"
+echo "== Vulkan (only the wgpu backend needs it; failures here are not fatal)"
+apt-get install -y libvulkan1 vulkan-tools > /root/vulkan-install.log 2>&1 || echo "   vulkan packages failed, see /root/vulkan-install.log"
+ls /usr/share/vulkan/icd.d /etc/vulkan/icd.d 2>/dev/null | sed 's/^/   icd: /'
+vulkaninfo --summary 2>&1 | grep -E "deviceName|driverName|driverInfo" | sed 's/^/   /' | head -4 || true
+
 echo "== done. Next: copy the repo (git bundle or rsync), then build the backends."
 echo "   export PATH=$CUDA_DIR/bin:\$PATH CUDA_TOOLKIT_PATH=$CUDA_DIR CUDA_HOME=$CUDA_DIR"
