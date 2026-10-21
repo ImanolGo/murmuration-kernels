@@ -63,6 +63,20 @@ mod friction {
         out.store(v);
     }
 
+    // 2c. The corrected form of the reference snippet (scalar pointer -> rank 1 -> wide -> offsets).
+    #[cutile::entry()]
+    unsafe fn docs_fixed(raw_ptr: *mut f32, out: &mut Tensor<f32, { [128] }>) {
+        let offsets: Tile<i32, { [128] }> = iota(shape![128]);
+        let ptr: PointerTile<*mut f32, { [] }> = pointer_to_tile(raw_ptr);
+        let ptr1: PointerTile<*mut f32, { [1] }> = reshape_ptr(ptr, shape![1]);
+        let wide: PointerTile<*mut f32, { [128] }> = broadcast_ptr(ptr1, shape![128]);
+        let offset_ptrs: PointerTile<*mut f32, { [128] }> = wide.offset_tile(offsets);
+        let (v, _t): (Tile<f32, { [128] }>, Token) = unsafe {
+            load_ptr_tko(offset_ptrs, ordering::Weak, None::<scope::TileBlock>, None, None, None, Latency::<0>)
+        };
+        out.store(v);
+    }
+
     // --- 3. The snippet in cutile-book/reference/dsl-api.md (PointerTile section) does not type-check. ---
     #[cfg(feature = "docs-snippet")]
     #[cutile::entry()]
@@ -105,5 +119,6 @@ fn main() {
     all_ok &= try_compile("generic_entry", &["128"], both);
     all_ok &= try_compile("ptr_chain", &[], out_only);
     all_ok &= try_compile("ptr_steps", &[], out_only);
+    all_ok &= try_compile("docs_fixed", &[], out_only);
     std::process::exit(i32::from(!all_ok));
 }
