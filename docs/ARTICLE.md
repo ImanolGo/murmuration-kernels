@@ -50,7 +50,7 @@ The first cause was registers. The CUDA kernel uses 61 registers per thread, so 
 
 The second cause shows up in Nsight Compute once occupancy is equal. Memory traffic was identical to the sector, but the Rust kernel executed 77 percent more instructions (259 million against 146 million on the laptop, 254 million against 143 million on the Ada card). On the laptop the kernel is limited by latency, so most of that was hidden and cost 14 percent in time. On the Ada card the register counts were 64 and 62 and the occupancy was the same, so the whole 30 percent gap is this instruction count. Two parts of it I could pin down. Rust checks every slice index, and removing the checks took 9 percent of the instructions away. And the generated PTX contains no `min.f32` or `max.f32` at all: float min and max compile to compare-and-select, where CUDA uses the hardware instruction. I tried both `libm::fmaxf` and `f32::max`; they compile the same way. The rest of the extra instructions I did not attribute.
 
-I also ran into one thing the backend rejects: `f32::to_int_unchecked` fails with "invalid input program". I have not reduced either of these to a bug report yet.
+I also ran into one thing the backend rejects: `f32::to_int_unchecked` fails with "invalid input program". Both reproduce in a few lines of Rust, and neither is in the project's issue tracker as far as I could find.
 
 ## wgpu: nearly as fast, and opaque
 
@@ -73,9 +73,9 @@ Getting it correct took four fixes, three of them my own mistakes, and one that 
 - A regular expression in my kernel generator left one literal `128` in place for smaller tiles, so every smaller tile failed the reference check. The check caught it before I believed any speed.
 - `constant(false, shape)` compiles to a tile of true. The Tile IR shows `constant <i1: 1>`. My `and` helper was `select(a, b, false)`, which became `select(a, b, true)`, which computes "a implies b". Every bird counted itself as its own neighbour: all 191 birds that decided on the first step had exactly one extra. I found it by reading the generated IR after looking at which birds were wrong. The workaround is to build false from a comparison.
 
-That last one I consider a compiler bug. I am still reducing it to a minimal reproduction.
+That last one is a compiler bug, and I was not the first to find it: it is NVIDIA/cuda-rust issue #1469, opened ten days before I hit it, with a fix in the open pull request #1470. I checked that the pull request's code gives the right constants on a small compile-only program.
 
-The DSL also has no `atan`, so the bank-angle target uses a polynomial I wrote, and a generic device function returns a type with its shape unsubstituted, so the tile size is a literal everywhere. The full list is in `docs/progress.md`. One thing worked better than I expected: the compile-only API lowered every kernel to an sm_89 cubin on the laptop with no GPU, so I could write and check all of it before renting anything.
+The DSL also has no `atan`, so the bank-angle target uses a polynomial I wrote. A generic device function called from a generic kernel returns a type with the kernel's generic unsubstituted, so the tile size is a literal everywhere. I reduced that one, a pointer-tile method chain that fails to infer its type, and a documentation snippet that does not type-check, to small compile-only programs. The full list is in `docs/progress.md`. One thing worked better than I expected: the compile-only API lowered every kernel to an sm_89 cubin on the laptop with no GPU, so I could write and check all of it before renting anything.
 
 With the defaults, `decide` took 5.57 ms, 4.5 times CUDA's 1.24. Nsight Compute showed why immediately. The compiler chose 246 registers per thread, so only two blocks of 128 threads fit on a multiprocessor, an occupancy of 16.7 percent. The occupancy hint in the compile options changes that. With a hint of 10 the same code uses 48 registers, occupancy goes to 83 percent, and the time falls to 2.59 ms. I swept the hint, the tile size and the number of warps per block, and checked the result against the reference for every setting.
 

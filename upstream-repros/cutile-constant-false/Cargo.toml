@@ -1,0 +1,13 @@
+[package]
+name = "cutile-constant-false"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Minimal reproduction: cuTile Rust lowers constant(false, shape) to a tile of true"
+
+# Standalone workspace. Compile-only: needs the CUDA headers (CUDA_TOOLKIT_PATH), no GPU.
+[workspace]
+
+[dependencies]
+cutile = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "e027ac324f663e8408c13c116d7dddd58d5e8daf" }
+cutile-compiler = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "e027ac324f663e8408c13c116d7dddd58d5e8daf" }

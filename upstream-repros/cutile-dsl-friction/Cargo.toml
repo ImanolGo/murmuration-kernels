@@ -1,0 +1,17 @@
+[package]
+name = "cutile-dsl-friction"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Minimal reproductions: three DSL friction points in cuTile Rust (device-function generics and pointer-tile reshape)"
+
+# Standalone workspace. Compile-only: needs the CUDA headers (CUDA_TOOLKIT_PATH), no GPU.
+[workspace]
+
+[dependencies]
+cutile = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "e027ac324f663e8408c13c116d7dddd58d5e8daf" }
+cutile-compiler = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "e027ac324f663e8408c13c116d7dddd58d5e8daf" }
+
+[features]
+# The reference's pointer-broadcast snippet; fails at rustc, so it cannot share a build with the rest.
+docs-snippet = []

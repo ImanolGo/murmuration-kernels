@@ -303,16 +303,20 @@ per thread allows few resident warps.
 1. No `atan` or `atan2` in the DSL (`sin`, `cos`, `tan`, `exp`, `pow`, `floor`, `sqrt` exist).
    `integrate` needs `atan` for the bank target, so it carries a Cephes polynomial
    (about 1e-7 error, three comparisons and selects). Parity will show whether that is enough.
-2. A user device function's return type is inferred only from a typed `let`, never from an
-   argument position; every helper call is bound to an annotated `let`.
-3. A **generic** device function (`fn f<const B: i32>`) returns a type with its `B` unsubstituted,
-   and a module `const` is not evaluated inside a type `{ [B] }`. The tile size is therefore the
-   literal `128` everywhere; changing it means editing the source.
+2. A user device function that is generic over a shape generic (`const S: [i32; 1]`) failed to infer its
+   return type when called in argument position ("Failed to determine typeck return type"), so I bound
+   such calls to annotated `let`s. A later minimal reproduction (`upstream-repros/cutile-dsl-friction`)
+   shows that a *concrete* helper called in argument position compiles; the failure is tied to the generic.
+3. **A generic device function called from a generic kernel returns a type with the kernel's generic
+   unsubstituted** (`Tile<f32, { [B] }>` against `Tile<f32, { [128] }>`; reproduced, compile-only). A module
+   `const` is also not evaluated inside a type `{ [B] }`. The tile size is therefore the literal `128`
+   everywhere; changing it means editing the source (the generator does it for `decide`).
 4. `constant(x, shape)` needs a literal; a variable needs `broadcast_scalar`.
-5. `PointerTile::broadcast` keeps the rank, and the `reshape` *method* did not compile
-   ("return type is missing a compiled tile type"). The free functions `reshape_ptr` and
-   `broadcast_ptr` work. The reference's snippet (`ptr.broadcast(shape![128])` from a scalar
-   pointer) does not type-check.
+5. A **method chain** on a pointer tile (`p.reshape(shape![1]).broadcast(shape![128]).offset_tile(off)`) fails
+   with "return type is missing a compiled tile type"; the same steps as separate typed `let`s compile
+   (reproduced). `PointerTile::broadcast` keeps the rank, so a scalar pointer must be `reshape`d to rank 1
+   first, and the reference's snippet (`ptr.broadcast(shape![128])` from a scalar pointer) does not type-check
+   (reproduced, `--features docs-snippet`).
 6. Mutable tensors, `scan_sum`, `reduce_max`, `tile_to_scalar` loop bounds, nested `for` loops with
    a dozen carried tiles, and masked atomics all compiled without trouble.
 
@@ -338,8 +342,9 @@ hand-written `atan`. Getting there took four fixes, three of them mine:
 2. **`constant(false, shape)` compiles to a tile of TRUE** (`constant <i1: 1>` in the Tile IR). My `band(a, b) =
    select(a, b, constant(false))` therefore computed `a -> b`, which let the bird itself into its own neighbour set:
    every one of 191 deciding birds had exactly one extra neighbour. Found by reading the generated IR, not by guessing.
-   `false` now comes from a comparison. **A DSL/compiler bug worth reporting upstream** (a minimal reproduction is
-   still to be made).
+   `false` now comes from a comparison. **Already reported upstream as NVIDIA/cuda-rust #1469, with a fix proposed in
+   the still-open PR #1470** (opened 10 October, before I hit it). I reproduced it with a compile-only program
+   (`upstream-repros/cutile-constant-false`) and checked that PR #1470's head (`d23a842`) fixes it.
 3. **A sign error in my `body_up` cross product** (`integrate`): small velocity error, only for non-level flight.
 4. **A regex bug in my generator** that left one `128` literal in non-128 tiles, which made every smaller tile fail
    parity until fixed. Parity caught it before any time was believed.
@@ -397,7 +402,6 @@ launch per variant.
 synchronised once (needed for event timing); the borrowed partition `(&mut t).partition(..)` writes in place;
 `ncu` on a cuTile kernel works unmodified (kernel name `decide_entry`).
 
-**Next:** the write-up; reduce the `constant(false)` miscompile to a minimal reproduction for upstream; decide what
-to do with the remaining cuTile instruction-count gap (a gather-layout change, `float4`-style loads, is the obvious
+**Next:** the write-up; decide what to do with the remaining cuTile instruction-count gap (a gather-layout change, `float4`-style loads, is the obvious
 experiment). Rented VMs: none of mine are running. Instance 57040734 ("apg", A40) appeared on the account during the
 session and was not created by this project.

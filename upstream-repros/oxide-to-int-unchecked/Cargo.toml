@@ -1,0 +1,16 @@
+[package]
+name = "oxide-to-int-unchecked"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Minimal reproduction: f32::to_int_unchecked fails to compile in a cuda-oxide kernel"
+
+[workspace]
+
+[dependencies]
+cuda-device = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "e027ac324f663e8408c13c116d7dddd58d5e8daf" }
+cuda-host = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "e027ac324f663e8408c13c116d7dddd58d5e8daf" }
+cuda-core = { git = "https://github.com/NVIDIA/cuda-rust.git", rev = "e027ac324f663e8408c13c116d7dddd58d5e8daf" }
+
+[features]
+unchecked = []
