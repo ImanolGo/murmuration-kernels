@@ -206,3 +206,51 @@ no longer needed to build `oxide/`.
 **Possible upstream issues (not filed):** (1) float min/max lower to `setp`/`selp`, never to
 `min.f32`/`max.f32`; (2) `f32::to_int_unchecked` fails to compile. Each needs a minimal
 reproduction outside this project first, and CONTRIBUTING.md asks for an issue before a PR.
+
+## 2026-10-21 (evening): wgpu backend
+
+`crates/flock-wgpu` (stable Rust, wgpu 30.0.1, WGSL in `src/flock.wgsl`): the same
+eight kernels in the same order. The device is opened with the adapter's own limits
+because the shaders bind 14 storage buffers (the WebGPU default is 8), and every
+buffer is declared `read_write` because the passes share one bind group layout.
+Times are Vulkan timestamp queries per pass. Adapter: GTX 1650 Max-Q on Vulkan,
+driver NVIDIA 615.78.08.
+
+**Parity.** Passes at 1, 10, 30 and 1000 steps. At 100 steps it failed the original
+criterion (one bird, see the traced threshold flip in SPEC.md) and passes the relaxed
+one. CUDA and oxide have 0 birds above tolerance at 100 steps, wgpu has 1.
+
+**Speed**, one session, 20 warm-up + 20 timed steps, mean ms (3 runs; the first CUDA
+100k run was 8.17 ms with cold clocks and is excluded from the CUDA figure):
+
+| Birds | CUDA C++ `decide` | oxide + `launch_bounds` | oxide + `launch_bounds` + unchecked | wgpu (WGSL) |
+|---|---|---|---|---|
+| 100,000 | 7.44 | 8.24 | 7.93 | 7.99-8.03 |
+| 1,000,000 | 97.3 | 101.1-101.2 | 99.6-99.7 | 100.3-100.7 |
+
+Step totals, same runs: 100k 7.68 / 8.48 / 8.18 / 8.26-8.29 ms; 1M 103.7-103.8 /
+107.5-107.7 / 106.1-106.2 / 106.9-107.3 ms. Relative to CUDA, `decide` is 11 % /
+7 % / 7 % slower at 100k and 4 % / 2 % / 3 % at 1M. The untuned oxide kernel
+(no `launch_bounds`) is 9.2-9.7 ms at 100k.
+
+What this does and does not show:
+- The portable path (WGSL, SPIR-V, the Vulkan driver's compiler) ends up within about
+  7 % of CUDA C++ here and level with tuned cuda-oxide. That is one GPU, one driver,
+  one workload.
+- **Why** wgpu is faster than untuned oxide is not known. Nsight Compute does not
+  profile Vulkan compute, so there are no registers, occupancy or instruction counts
+  for the wgpu shaders. Do not read the CUDA/oxide counter explanations across.
+- wgpu's "step total" is the sum of pass durations; CUDA's is the sum of event spans.
+  The wgpu "step span" (first pass begin to last pass end) is 0.06-0.08 ms longer
+  than its total; the difference is small next to the gaps being compared.
+- All backends share one grid algorithm (histogram, scan, scatter); the wgpu grid
+  kernels cost the same as CUDA's within noise (histogram 1.84 vs 1.81 ms, scatter
+  3.20 vs 3.21 ms at 1M), scan is slower (0.57 vs 0.47 ms at 1M).
+
+`flock-ref diff` now also prints steering, roll and spin differences (informational)
+and supports `--allow-outliers N` / `--outlier-max X`. `BACKEND=wgpu scripts/parity.sh` runs
+the wgpu backend.
+
+**Next:** cuTile Rust needs an sm_80+ GPU (rent one; compare against CUDA and
+oxide on the same GPU, and re-profile there). Then a write-up. Open: the two possible
+upstream issues (min/max lowering; `to_int_unchecked`).

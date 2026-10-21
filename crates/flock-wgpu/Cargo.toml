@@ -1,0 +1,13 @@
+[package]
+name = "flock-wgpu"
+description = "The flock core step as wgpu compute shaders (WGSL)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+flock-ref = { path = "../flock-ref" }
+wgpu.workspace = true
+pollster.workspace = true
+bytemuck.workspace = true

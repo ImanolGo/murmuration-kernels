@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/flock-ref"]
+members = ["crates/flock-ref", "crates/flock-wgpu"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,9 @@ license = "MIT"
 
 [workspace.dependencies]
 glam = "0.34"
+wgpu = "30.0.1"
+pollster = "1"
+bytemuck = "1"
 
 [profile.release]
 lto = "thin"

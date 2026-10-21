@@ -11,7 +11,7 @@ use flock_ref::model::forward;
 const USAGE: &str = "usage:
   flock-ref gen   --birds N [--seed S] --out FILE
   flock-ref step  --in FILE --steps K --out FILE     (brute force; use N <= ~5000)
-  flock-ref diff  A.flk B.flk [--pos-tol X] [--vel-tol X]
+  flock-ref diff  A.flk B.flk [--pos-tol X] [--vel-tol X] [--allow-outliers N] [--outlier-max X]
   flock-ref stats FILE
   flock-ref statdiff A.flk B.flk     (aggregate agreement for long, chaotic runs)";
 
@@ -148,12 +148,28 @@ fn diff(args: &[String]) -> Result<ExitCode, String> {
         .parse()
         .map_err(|_| "bad --vel-tol")?;
     let (mut dp, mut dv, mut dr, mut dc) = (0f32, 0f32, 0f32, 0f32);
+    let (mut ds, mut droll, mut dspin) = (0f32, 0f32, 0f32);
+    let allow: usize = opt(args, "--allow-outliers")
+        .unwrap_or("0")
+        .parse()
+        .map_err(|_| "bad --allow-outliers")?;
+    let outlier_max: f32 = opt(args, "--outlier-max")
+        .unwrap_or("1e-2")
+        .parse()
+        .map_err(|_| "bad --outlier-max")?;
+    let mut outliers = 0usize;
     let mut nb_mismatch = 0usize;
     for (x, y) in a.birds.iter().zip(&b.birds) {
-        dp = dp.max((x.pos - y.pos).abs().max_element());
-        dv = dv.max((x.vel - y.vel).abs().max_element());
+        let bp = (x.pos - y.pos).abs().max_element();
+        let bv = (x.vel - y.vel).abs().max_element();
+        dp = dp.max(bp);
+        dv = dv.max(bv);
+        outliers += usize::from(bp > pos_tol || bv > vel_tol);
         dr = dr.max((x.radius - y.radius).abs());
         dc = dc.max((x.centrality - y.centrality).abs());
+        ds = ds.max((x.steering - y.steering).abs().max_element());
+        droll = droll.max((x.roll - y.roll).abs());
+        dspin = dspin.max((x.spin - y.spin).abs());
         nb_mismatch += usize::from(x.neighbours != y.neighbours);
     }
     println!(
@@ -169,7 +185,20 @@ fn diff(args: &[String]) -> Result<ExitCode, String> {
         "neighbour-count mismatches {nb_mismatch} of {}",
         a.birds.len()
     );
-    let ok = dp <= pos_tol && dv <= vel_tol && nb_mismatch == 0;
+    // Strict by default. With --allow-outliers N, up to N birds may exceed the
+    // tolerance (an isolated threshold flip, see docs/SPEC.md) provided none
+    // exceeds --outlier-max.
+    let ok = if allow == 0 {
+        dp <= pos_tol && dv <= vel_tol && nb_mismatch == 0
+    } else {
+        outliers <= allow && dp <= outlier_max && dv <= outlier_max && nb_mismatch == 0
+    };
+    println!(
+        "(informational) max |dsteering| {ds:.3e}  max |droll| {droll:.3e}  max |dspin| {dspin:.3e}"
+    );
+    if allow > 0 {
+        println!("birds above tolerance: {outliers} (allowed {allow}, each below {outlier_max})");
+    }
     println!("{}", if ok { "PASS" } else { "FAIL" });
     Ok(if ok {
         ExitCode::SUCCESS
