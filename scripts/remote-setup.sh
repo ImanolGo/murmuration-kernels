@@ -18,7 +18,8 @@ if [ ! -x "$CUDA_DIR/bin/nvcc" ]; then
   cd /root
   wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
   dpkg -i cuda-keyring_1.1-1_all.deb >/dev/null
-  apt-get update -qq
+  # NVIDIA's CDN is sometimes mid-sync ("File has unexpected size"); retry instead of aborting
+  for attempt in 1 2 3 4 5 6; do apt-get update -qq && break; echo "apt-get update failed (attempt $attempt), retrying"; sleep 20; done
   apt-get install -y "$CUDA_PKG" clang libclang-dev build-essential pkg-config libssl-dev rsync
 fi
 export PATH="$CUDA_DIR/bin:$PATH" CUDA_TOOLKIT_PATH="$CUDA_DIR" CUDA_HOME="$CUDA_DIR"
