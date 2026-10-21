@@ -11,14 +11,35 @@ type Spec = (&'static str, Vec<String>, Vec<(&'static str, &'static [i32])>);
 
 fn specs() -> Vec<Spec> {
     let b: Vec<String> = vec![];
-    vec![(
+    vec![
+        ("grid_clear", vec![], vec![("counts", &[1])]),
+        (
+            "grid_histogram",
+            vec![],
+            vec![("bucket", &[1]), ("px", &[1]), ("py", &[1]), ("pz", &[1])],
+        ),
+        (
+            "grid_scan_blocks",
+            vec![],
+            vec![("offsets", &[1]), ("block_sums", &[1]), ("counts", &[1])],
+        ),
+        ("grid_scan_totals", vec![], vec![("block_sums", &[1])]),
+        (
+            "grid_scan_add",
+            vec![],
+            vec![("offsets", &[1]), ("counts", &[1]), ("block_sums", &[1])],
+        ),
+        ("grid_scatter", vec![], vec![("bucket", &[1])]),
+        ("decide", vec![], vec![]),
+        (
         "integrate",
         b,
         vec![
             ("px", &[1]), ("py", &[1]), ("pz", &[1]), ("vx", &[1]), ("vy", &[1]), ("vz", &[1]),
             ("roll", &[1]), ("spin", &[1]), ("sx", &[1]), ("sy", &[1]), ("sz", &[1]),
         ],
-    )]
+    ),
+    ]
 }
 
 fn main() {
