@@ -1,0 +1,16 @@
+Authorization required, but no authorization protocol specified
+Authorization required, but no authorization protocol specified
+Authorization required, but no authorization protocol specified
+Authorization required, but no authorization protocol specified
+Authorization required, but no authorization protocol specified
+# flock_wgpu: NVIDIA RTX 4000 Ada Generation on Vulkan (DiscreteGpu), driver "NVIDIA" 580.105.08
+# 100000 birds, 40 steps (20 warm-up, not timed)
+# 20 timed steps (mean GPU ms per pass, timestamp queries)
+  grid_histogram      0.0111
+  grid_scan           0.0297
+  grid_scatter        0.0118
+  decide              1.5434
+  integrate           0.0088
+  step total          1.6047
+  step span           1.6450  (first pass begin to last pass end, includes gaps)
+  bird-steps/s      62315732

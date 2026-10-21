@@ -1,0 +1,11 @@
+# flock_cuda: NVIDIA RTX 4000 Ada Generation (sm_89), CUDA driver 13.0 runtime 13.3
+# 1000000 birds, 40 steps (20 warm-up, not timed)
+# decide occupancy: 4 blocks/SM of 256 threads = 66% of 1536 threads/SM (dynamic smem 0 B)
+# 20 timed steps (mean GPU ms per pass, CUDA events)
+  grid_histogram      0.1031
+  grid_scan           0.0756
+  grid_scatter        0.0796
+  decide              9.3876
+  integrate           0.1990
+  step total          9.8449
+  bird-steps/s     101575360

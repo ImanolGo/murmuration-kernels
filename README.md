@@ -7,7 +7,7 @@ profiler evidence, and to say where each model helps or gets in the way.
 
 > **Status: work in progress.** The CPU oracle and the CUDA C++, cuda-oxide, wgpu and cuTile
 > Rust backends all work and agree with each other. Results exist for two GPUs (a GTX 1650 and
-> an RTX 4000 Ada); wgpu was not run on the second. The write-up is not done.
+> an RTX 4000 Ada), and the article is in [docs/ARTICLE.md](docs/ARTICLE.md).
 
 The workload is a reduced version of the model in
 [murmuration-gpu](https://github.com/ImanolGo/murmuration-gpu): a spatial-hash
@@ -23,7 +23,7 @@ what is left out.
 | CUDA C++ | baseline done | unoptimised, passes parity |
 | cuda-oxide (SIMT, Rust) | done, passes parity | runs on sm_75; `decide` 4-24 % slower depending on tuning, see below |
 | cuTile Rust | done, passes parity | needs sm_80+; 2.1-2.5x slower than CUDA C++ on `decide` once tuned, see below |
-| wgpu (WGSL) | done, passes parity | within ~7 % of CUDA C++ on this GPU |
+| wgpu (WGSL) | done, passes parity | 3-7 % behind CUDA C++ on the GTX 1650, 25-31 % behind on the RTX 4000 Ada |
 
 ## First numbers
 
@@ -44,15 +44,15 @@ instruction). The kernel is latency-bound, so that costs 14 %, not 77 %. There a
 counters for the wgpu shaders (Nsight Compute does not profile Vulkan compute).
 Details, caveats and what is not tested are in [docs/progress.md](docs/progress.md).
 
-## Second GPU: RTX 4000 Ada (sm_89), all four GPU backends but wgpu
+## Second GPU: RTX 4000 Ada (sm_89)
 
 Rented VM, driver 580.105, CUDA 13.3, same protocol (20 warm-up + 20 timed steps, 3 runs each).
 Mean GPU time of `decide` per step:
 
-| Birds | CUDA C++ | cuda-oxide | cuTile Rust, defaults | cuTile Rust, tuned |
-|---|---|---|---|---|
-| 100,000 | 1.24 ms | 1.64 ms | 5.57 ms | 2.59 ms |
-| 1,000,000 | 9.46 ms | 12.3 ms | 50.6 ms | 23.3 ms |
+| Birds | CUDA C++ | cuda-oxide | wgpu | cuTile Rust, defaults | cuTile Rust, tuned |
+|---|---|---|---|---|---|
+| 100,000 | 1.24 ms | 1.64 ms | 1.54 ms | 5.57 ms | 2.59 ms |
+| 1,000,000 | 9.46 ms | 12.3 ms | 12.3 ms | 50.6 ms | 23.3 ms |
 
 cuTile's regular passes beat CUDA's (at 1M birds, `integrate` 0.13 vs 0.20 ms and the scan 0.04 vs 0.08 ms), but its
 neighbour search is 2-5x slower. Its default build uses 246 registers per thread (16.7 % occupancy); an occupancy hint

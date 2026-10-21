@@ -405,3 +405,28 @@ synchronised once (needed for event timing); the borrowed partition `(&mut t).pa
 **Next:** the write-up; decide what to do with the remaining cuTile instruction-count gap (a gather-layout change, `float4`-style loads, is the obvious
 experiment). Rented VMs: none of mine are running. Instance 57040734 ("apg", A40) appeared on the account during the
 session and was not created by this project.
+
+## 2026-10-21 (late): wgpu on the RTX 4000 Ada
+
+A second session on the same host (RTX 4000 Ada, driver 580.105.08), `scripts/cloud-wgpu.sh`: `docs/results/rtx4000ada-2026-10-21/wgpu-session/`.
+wgpu reported `NVIDIA RTX 4000 Ada Generation on Vulkan (DiscreteGpu)`. The earlier assumption that the VM had no Vulkan was
+never tested; it works once `libvulkan1` is installed (the NVIDIA ICD ships with the driver).
+
+**Parity.** Passes at 1, 10, 30, 100 and 1000 steps with results identical to the laptop run, including the same single
+outlier bird at 100 steps (`dvel 1.966e-3`, `dpos 2.136e-4`): the wgpu result does not depend on the GPU here.
+
+**Speed**, mean ms per step, 3 runs (first wgpu run at 100k was 7 % slower; medians below), CUDA C++ re-measured in the same session:
+
+| Birds | CUDA C++ `decide` | wgpu `decide` | wgpu / CUDA | CUDA step | wgpu step |
+|---|---|---|---|---|---|
+| 100,000 | 1.236 | 1.543 | 1.25 | 1.283 | 1.605 |
+| 1,000,000 | 9.441 | 12.34 | 1.31 | 9.897 | 13.0 |
+
+CUDA reproduces the first session (1.229-1.238 ms; 9.36-9.52 ms), so the sessions are comparable. The grid passes are also
+slower in wgpu at 1M birds (histogram 0.142 vs 0.103 ms, scan 0.116 vs 0.076, scatter 0.206 vs 0.080); `integrate` matches
+(0.194 vs 0.199). **This changes the earlier summary**: wgpu is 3-7 % behind CUDA C++ on the Turing laptop GPU but 25-31 % behind
+on the Ada GPU, level with cuda-oxide there. There are no counters for the wgpu shaders, so the cause is unknown.
+
+**Process notes.** NVIDIA's apt mirror was mid-sync for several minutes ("File has unexpected size"); `scripts/remote-setup.sh`
+now retries `apt-get update`. A remote `setsid nohup ... &` over SSH can leave the local client attached; poll a log instead of
+waiting on the command.

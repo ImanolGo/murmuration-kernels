@@ -1,0 +1,11 @@
+mean ms per step (20 warm-up + 20 timed); runs listed
+--- 100000 birds
+  cuda    runs 3  decide [1.237, 1.23, 1.236]  total [1.284, 1.278, 1.283]
+          hist 0.0089  scan 0.0180  scatter 0.0115  integrate 0.0088  (medians)
+  wgpu    runs 3  decide [1.656, 1.543, 1.542]  total [1.718, 1.605, 1.604]
+          hist 0.0111  scan 0.0297  scatter 0.0120  integrate 0.0088  (medians)
+--- 1000000 birds
+  cuda    runs 3  decide [9.441, 9.388, 9.483]  total [9.897, 9.845, 9.943]
+          hist 0.1031  scan 0.0756  scatter 0.0796  integrate 0.1990  (medians)
+  wgpu    runs 3  decide [12.4, 12.324, 12.34]  total [13.056, 12.984, 12.999]
+          hist 0.1424  scan 0.1162  scatter 0.2057  integrate 0.1941  (medians)

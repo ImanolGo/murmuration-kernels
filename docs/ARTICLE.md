@@ -33,14 +33,14 @@ The main number is the time for the neighbour search kernel, `decide`, per step.
 
 "Tuned" here means one launch-bounds attribute and removing slice bounds checks. cuTile Rust cannot run on this card, because it needs compute capability 8.0 or higher.
 
-For that I rented a GPU: an RTX 4000 Ada (sm_89) on Vast.ai, for about $0.24 an hour. All the cloud work, which included an earlier smoke test and one host I abandoned because it was slow to boot, cost about $0.47.
+For that I rented a GPU: an RTX 4000 Ada (sm_89) on Vast.ai, for about $0.24 an hour. All the cloud work, which included a smoke test, one host I abandoned because it was slow to boot and a second session for wgpu, cost under a dollar.
 
-| Birds | CUDA C++ | cuda-oxide | cuTile Rust, defaults | cuTile Rust, tuned |
-|---|---|---|---|---|
-| 100,000 | 1.24 ms | 1.64 ms | 5.57 ms | 2.59 ms |
-| 1,000,000 | 9.46 ms | 12.3 ms | 50.6 ms | 23.3 ms |
+| Birds | CUDA C++ | cuda-oxide | wgpu | cuTile Rust, defaults | cuTile Rust, tuned |
+|---|---|---|---|---|---|
+| 100,000 | 1.24 ms | 1.64 ms | 1.54 ms | 5.57 ms | 2.59 ms |
+| 1,000,000 | 9.46 ms | 12.3 ms | 12.3 ms | 50.6 ms | 23.3 ms |
 
-The three runs of each cell agreed within 3 percent. wgpu is missing from the second table because the rented machine had no Vulkan.
+The three runs of each cell agreed within 3 percent, apart from the first wgpu run at 100,000 birds, which was 7 percent slower than the other two (the table uses the median). wgpu ran in a second session on the same machine; CUDA C++ in that session gave 1.24 ms and 9.4 ms again, matching the first.
 
 ## cuda-oxide: close, and the gap has causes
 
@@ -52,11 +52,13 @@ The second cause shows up in Nsight Compute once occupancy is equal. Memory traf
 
 I also ran into one thing the backend rejects: `f32::to_int_unchecked` fails with "invalid input program". Both reproduce in a few lines of Rust, and neither is in the project's issue tracker as far as I could find.
 
-## wgpu: nearly as fast, and opaque
+## wgpu: close on one GPU, 25 to 31 percent behind on the other
 
-The same kernels in WGSL, going through SPIR-V and the Vulkan driver, ran about 7 percent behind CUDA C++ at 100,000 birds and 3 percent behind at a million. That is level with tuned cuda-oxide.
+The same kernels in WGSL, going through SPIR-V and the Vulkan driver, ran about 7 percent behind CUDA C++ at 100,000 birds and 3 percent behind at a million on the Turing laptop card. That is level with tuned cuda-oxide.
 
-I cannot say why. Nsight Compute does not profile Vulkan compute, so I have no register counts or instruction counts for these shaders, and I did not read the counters from the other backends across to them.
+On the Ada card the gap was larger: 25 percent at 100,000 birds (1.54 ms against 1.24) and 31 percent at a million (12.3 against 9.4), level with the default cuda-oxide build there. The grid passes cost more too. At a million birds wgpu's scatter took 0.21 ms against CUDA's 0.08, its histogram 0.14 against 0.10 and its scan 0.12 against 0.08. Only `integrate` matched.
+
+I cannot say why the two GPUs differ. Nsight Compute does not profile Vulkan compute, so I have no register counts or instruction counts for these shaders, and I did not read the counters from the other backends across to them.
 
 ## cuTile Rust: a different shape of program
 
@@ -109,7 +111,7 @@ The tuning was not even. I searched three settings for cuTile on the exact input
 
 Each Nsight figure is one launch per variant. The `constant(false)` miscompile, the min and max lowering and the missing `atan` are facts about this revision of an alpha project.
 
-I did not run wgpu on the rented GPU, because the virtual machine had no Vulkan. wgpu's numbers are from the laptop only.
+The wgpu gap changed with the GPU, from a few percent to about a quarter, and I have no counters to explain it.
 
 ## Reproduce
 

@@ -1,0 +1,5 @@
+birds 2000  time A 0.0500 B 0.0500
+max |dpos| 7.629e-6  max |dvel| 1.907e-6  max |dradius| 1.192e-7  max |dcentrality| 2.086e-7
+neighbour-count mismatches 0 of 2000
+(informational) max |dsteering| 5.085e-7  max |droll| 5.960e-8  max |dspin| 2.980e-6
+PASS

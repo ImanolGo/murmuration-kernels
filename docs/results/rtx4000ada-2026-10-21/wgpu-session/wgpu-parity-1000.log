@@ -1,0 +1,5 @@
+mean speed       A    9.9927  B    9.9918  |d| 0.0009  (tol 0.02)
+mean neighbours  A    6.6795  B    6.6710  |d| 0.0085  (tol 0.1)
+mean radius      A    1.5390  B    1.5390  |d| 0.0001  (tol 0.01)
+polarization     A    0.9983  B    0.9983  |d| 0.0000  (tol 0.005)
+PASS
