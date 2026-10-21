@@ -1,0 +1,10 @@
+# flock_cutile: NVIDIA RTX 4000 Ada Generation (cuda-rust e027ac3, tile 128)
+# 1000000 birds, 40 steps (20 warm-up, not timed)
+# 20 timed steps (mean GPU ms per pass, CUDA events)
+  grid_histogram      0.0859
+  grid_scan           0.0388
+  grid_scatter        0.0799
+  decide             50.6304
+  integrate           0.1183
+  step total         50.9535
+  bird-steps/s      19625749

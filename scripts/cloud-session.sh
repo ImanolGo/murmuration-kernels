@@ -88,7 +88,9 @@ metrics = ",".join([
 ])
 cols = {}
 for b in ("cuda", "oxide", "cutile"):
-    r = subprocess.run(["ncu", "-i", f"{out}/ncu-{b}-100k.ncu-repz", "--page", "raw", "--csv", "--metrics", metrics],
+    import glob  # the extension is .ncu-rep or .ncu-repz depending on the ncu version
+    path = (glob.glob(f"{out}/ncu-{b}-100k.ncu-rep*") or [f"{out}/ncu-{b}-100k.ncu-rep"])[0]
+    r = subprocess.run(["ncu", "-i", path, "--page", "raw", "--csv", "--metrics", metrics],
                        capture_output=True, text=True)
     rows = [x for x in csv.reader(r.stdout.splitlines()) if len(x) > 20]
     cols[b] = dict(zip(rows[0], rows[2])) if len(rows) >= 3 else {}

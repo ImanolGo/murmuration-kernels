@@ -25,13 +25,17 @@ fn specs() -> Vec<Spec> {
         (
             "grid_scan_blocks",
             vec![],
-            vec![("offsets", &[1]), ("block_sums", &[1]), ("counts", &[1])],
+            vec![("offsets", &[1]), ("block_totals", &[1]), ("counts", &[1])],
         ),
-        ("grid_scan_totals", vec![], vec![("block_sums", &[1])]),
+        (
+            "grid_scan_totals",
+            vec![],
+            vec![("block_starts", &[1]), ("block_totals", &[1])],
+        ),
         (
             "grid_scan_add",
             vec![],
-            vec![("offsets", &[1]), ("counts", &[1]), ("block_sums", &[1])],
+            vec![("offsets", &[1]), ("counts", &[1]), ("block_starts", &[1])],
         ),
         ("grid_scatter", vec![], vec![("bucket", &[1])]),
         ("decide", vec![], vec![]),

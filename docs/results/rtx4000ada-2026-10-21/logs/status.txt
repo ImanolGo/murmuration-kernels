@@ -1,0 +1,43 @@
+ok      gpu-info (1 s)
+ok      build-ref (7 s)
+ok      build-cuda (3 s)
+ok      build-cutile (70 s)
+ok      install-cargo-oxide (36 s)
+ok      build-oxide (140 s)
+FAILED  cutile-grid-check (1 s)  see cutile-grid-check.log
+FAILED  cutile-run-1 (1 s)  see cutile-run-1.log
+FAILED  cutile-parity-1 (0 s)  see cutile-parity-1.log
+FAILED  cutile-run-10 (2 s)  see cutile-run-10.log
+FAILED  cutile-parity-10 (0 s)  see cutile-parity-10.log
+FAILED  cutile-run-30 (1 s)  see cutile-run-30.log
+FAILED  cutile-parity-30 (0 s)  see cutile-parity-30.log
+FAILED  cutile-run-100 (1 s)  see cutile-run-100.log
+FAILED  cutile-parity-100 (0 s)  see cutile-parity-100.log
+FAILED  cutile-run-1000 (1 s)  see cutile-run-1000.log
+FAILED  cutile-parity-1000 (0 s)  see cutile-parity-1000.log
+ok      cuda-parity-1 (1 s)
+ok      oxide-parity-1 (0 s)
+ok      cuda-parity-100 (1 s)
+ok      oxide-parity-100 (0 s)
+ok      bench-cuda-100000-1 (0 s)
+ok      bench-oxide-100000-1 (1 s)
+FAILED  bench-cutile-100000-1 (1 s)  see bench-cutile-100000-1.log
+ok      bench-cuda-100000-2 (0 s)
+ok      bench-oxide-100000-2 (0 s)
+FAILED  bench-cutile-100000-2 (2 s)  see bench-cutile-100000-2.log
+ok      bench-cuda-100000-3 (0 s)
+ok      bench-oxide-100000-3 (0 s)
+FAILED  bench-cutile-100000-3 (2 s)  see bench-cutile-100000-3.log
+ok      bench-cuda-1000000-1 (0 s)
+ok      bench-oxide-1000000-1 (1 s)
+FAILED  bench-cutile-1000000-1 (2 s)  see bench-cutile-1000000-1.log
+ok      bench-cuda-1000000-2 (0 s)
+ok      bench-oxide-1000000-2 (1 s)
+FAILED  bench-cutile-1000000-2 (2 s)  see bench-cutile-1000000-2.log
+ok      bench-cuda-1000000-3 (0 s)
+ok      bench-oxide-1000000-3 (1 s)
+FAILED  bench-cutile-1000000-3 (2 s)  see bench-cutile-1000000-3.log
+ok      ncu-cuda (3 s)
+ok      ncu-oxide (4 s)
+FAILED  ncu-cutile (3 s)  see ncu-cutile.log
+ok      ncu-summary (0 s)

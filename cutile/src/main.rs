@@ -9,6 +9,8 @@
 //! Needs a GPU with compute capability >= 8.0 and CUDA 13.2+.
 
 use cutile::prelude::*;
+use cutile::tile_kernel::CompileOptions;
+use flock_cutile::DECIDE_TILE;
 use flock_cutile::flock_kernels::{
     decide, grid_clear, grid_histogram, grid_scan_add, grid_scan_blocks, grid_scan_totals,
     grid_scatter, integrate,
@@ -55,7 +57,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let n = start.birds.len();
     let n_pad = pad_to(n, TILE);
     let buckets = buckets_for(n);
-    let scan_blocks = buckets / SCAN_BLOCK;
     // Bucket-sized arrays carry one extra scan block of padding: the scan-add program past
     // the last bucket tile writes offsets[buckets] = n, and partitions need whole tiles.
     let bucket_len = buckets + SCAN_BLOCK;
@@ -107,10 +108,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sorted: Tensor<i32> = api::zeros::<i32>(&[n_pad]).sync_on(&stream)?;
     let mut counts: Tensor<i32> = api::zeros::<i32>(&[bucket_len]).sync_on(&stream)?;
     let mut offsets: Tensor<i32> = api::zeros::<i32>(&[bucket_len]).sync_on(&stream)?;
-    let mut block_sums: Tensor<i32> = api::zeros::<i32>(&[SCAN_BLOCK]).sync_on(&stream)?;
+    // one total per scan block plus the padding block; the starts are one whole tile
+    let mut block_totals: Tensor<i32> =
+        api::zeros::<i32>(&[bucket_len / SCAN_BLOCK]).sync_on(&stream)?;
+    let mut block_starts: Tensor<i32> = api::zeros::<i32>(&[SCAN_BLOCK]).sync_on(&stream)?;
 
     let (n_i, mask_i) = (n as i32, (buckets - 1) as i32);
     let birds_grid = (n_pad / TILE) as u32;
+    // `decide` has its own tile size (tools/gen_decide.py); n_pad is a multiple of every size
+    let decide_grid = (n_pad / DECIDE_TILE) as u32;
+    // Experiment knobs for `decide` only (see docs/progress.md): FLOCK_CUTILE_WARPS sets
+    // `num_worker_warps_per_cta`, FLOCK_CUTILE_OCC the `occupancy` hint. Unset = compiler defaults.
+    let mut decide_opts = CompileOptions::default();
+    if let Ok(w) = std::env::var("FLOCK_CUTILE_WARPS") {
+        decide_opts = decide_opts.num_worker_warps_per_cta(w.parse()?);
+        println!("# decide: num_worker_warps_per_cta = {w}");
+    }
+    if let Ok(o) = std::env::var("FLOCK_CUTILE_OCC") {
+        decide_opts = decide_opts.occupancy(o.parse()?);
+        println!("# decide: occupancy hint = {o}");
+    }
     let events: Vec<_> = (0..steps * 5 + 1)
         .map(|_| device.new_event())
         .collect::<Result<_, _>>()?;
@@ -140,20 +157,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
             grid_scan_blocks(
                 (&mut offsets).partition([SCAN_BLOCK]),
-                (&mut block_sums).partition([1]),
+                (&mut block_totals).partition([1]),
                 &counts,
             )
-            .grid((scan_blocks as u32, 1, 1))
             .async_on(&stream)?;
-            grid_scan_totals((&mut block_sums).partition([SCAN_BLOCK])).async_on(&stream)?;
+            grid_scan_totals((&mut block_starts).partition([SCAN_BLOCK]), &block_totals)
+                .async_on(&stream)?;
             grid_scan_add(
                 (&mut offsets).partition([TILE]),
                 (&mut counts).partition([TILE]),
-                &block_sums,
+                &block_starts,
                 n_i,
                 buckets as i32,
             )
-            .grid(((buckets / TILE + 1) as u32, 1, 1))
             .async_on(&stream)?;
         }
         e[2].record(&stream)?;
@@ -189,7 +205,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 mask_i,
                 time,
             )
-            .grid((birds_grid, 1, 1))
+            .compile_options(decide_opts.clone())
+            .grid((decide_grid, 1, 1))
             .async_on(&stream)?;
         }
         e[4].record(&stream)?;

@@ -1,0 +1,10 @@
+    1 steps: max |dpos| 0.000e0  max |dvel| 9.537e-7  max |dradius| 0.000e0  max |dcentrality| 1.490e-7|neighbour-count mismatches 0 of 2000|(informational) max |dsteering| 1.192e-7  max |droll| 4.657e-9  max |dspin| 9.537e-7|PASS|
+
+   10 steps: max |dpos| 2.384e-7  max |dvel| 9.537e-7  max |dradius| 0.000e0  max |dcentrality| 1.788e-7|neighbour-count mismatches 0 of 2000|(informational) max |dsteering| 1.788e-7  max |droll| 3.353e-8  max |dspin| 1.192e-6|PASS|
+
+   30 steps: max |dpos| 7.629e-6  max |dvel| 1.937e-6  max |dradius| 0.000e0  max |dcentrality| 1.431e-6|neighbour-count mismatches 0 of 2000|(informational) max |dsteering| 3.014e-6  max |droll| 5.662e-7  max |dspin| 1.413e-5|PASS|
+
+  100 steps: neighbour-count mismatches 0 of 2000|(informational) max |dsteering| 4.835e-6  max |droll| 4.023e-7  max |dspin| 1.418e-5|birds above tolerance: 0 (allowed 2, each below 0.01)|PASS|
+
+ 1000 steps: PASS
+

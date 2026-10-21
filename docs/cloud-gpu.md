@@ -63,3 +63,15 @@ vastai show instances                    # must list nothing
 3. The offer's `driver_version` is the host's; a VM installs its own. Check `nvidia-smi` on the VM.
 4. Treat the host as untrusted: no tokens or keys on it, and copy only this repo
    (nothing else from your machine).
+
+## Session log, 2026-10-21
+
+A full scripted session on an RTX 4000 Ada VM ($0.241/h, 31 GB host RAM, booted in under 2 minutes) took about 1 hour 20
+minutes including two failed cuTile passes and the tuning sweep. Total spend across the smoke test, one abandoned
+slow-booting host and this session: about $0.47 of the $10 credit. Notes:
+- `ncu` on that image writes `.ncu-rep` (not `.ncu-repz`); `scripts/cloud-session.sh` now finds either.
+- Starting a long job over SSH with `nohup ... &` still leaves the client attached unless stdout/stderr are redirected
+  *outside* the remote shell; use a detached `ssh -f` or poll a log, and never `pkill -f` a pattern that appears in your
+  own command line.
+- Always re-list instances after destroying yours: another instance (not created by this project) was running on the
+  account afterwards.

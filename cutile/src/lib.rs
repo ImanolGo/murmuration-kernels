@@ -7,6 +7,11 @@
 // The kernels are `unsafe fn` entries that call unsafe pointer helpers.
 #![allow(unsafe_op_in_unsafe_fn)]
 
+// GENERATED-TILE-BEGIN
+/// Birds per tile of the `decide` kernel; written by tools/gen_decide.py (DECIDE_TILE).
+pub const DECIDE_TILE: usize = 128;
+// GENERATED-TILE-END
+
 #[cutile::module]
 pub mod flock_kernels {
     use cutile::core::*;
@@ -140,10 +145,12 @@ pub mod flock_kernels {
     }
 
     /// Level 1: each program scans a 2048-bucket block (exclusive) and writes its total.
+    /// `offsets` and `block_totals` must hold the same number of tiles (the launch grid is
+    /// inferred from the partitions): `buckets / 2048 + 1` here, the last one over padding.
     #[cutile::entry()]
     pub fn grid_scan_blocks(
         offsets: &mut Tensor<i32, { [2048] }>,
-        block_sums: &mut Tensor<i32, { [1] }>,
+        block_totals: &mut Tensor<i32, { [1] }>,
         counts: &Tensor<i32, { [-1] }>,
     ) {
         let pid = program_id(0);
@@ -152,30 +159,34 @@ pub mod flock_kernels {
         offsets.store(incl - c);
         let total: Tile<i32, { [] }> = reduce_sum(c, 0i32);
         let t1: Tile<i32, { [1] }> = total.reshape(shape![1]);
-        block_sums.store(t1);
+        block_totals.store(t1);
     }
 
-    /// Level 2: one program scans the block totals in place (padded to 2048 entries).
+    /// Level 2: one program turns the block totals (zero-padded to 2048) into block starts.
     #[cutile::entry()]
-    pub fn grid_scan_totals(block_sums: &mut Tensor<i32, { [2048] }>) {
-        let c: Tile<i32, { [2048] }> = block_sums.load();
+    pub fn grid_scan_totals(
+        block_starts: &mut Tensor<i32, { [2048] }>,
+        block_totals: &Tensor<i32, { [-1] }>,
+    ) {
+        let pid = program_id(0);
+        let c: Tile<i32, { [2048] }> = block_totals.load_tile(shape![2048], [pid]);
         let incl: Tile<i32, { [2048] }> = scan_sum(c, 0i32, reverse::Forward, 0i32);
-        block_sums.store(incl - c);
+        block_starts.store(incl - c);
     }
 
     /// Level 3: add each block's start offset, re-seed counts as the scatter cursor, and
-    /// write offsets[buckets] = n (the extra program past the last bucket tile).
+    /// write offsets[buckets] = n (it lands in the padding tile past the last bucket).
     #[cutile::entry()]
     pub fn grid_scan_add(
         offsets: &mut Tensor<i32, { [128] }>,
         counts: &mut Tensor<i32, { [128] }>,
-        block_sums: &Tensor<i32, { [-1] }>,
+        block_starts: &Tensor<i32, { [-1] }>,
         n: i32,
         buckets: i32,
     ) {
         let pid = program_id(0);
         let o: Tile<i32, { [128] }> = offsets.load();
-        let blk: Tile<i32, { [1] }> = block_sums.load_tile(shape![1], [pid / 16i32]);
+        let blk: Tile<i32, { [1] }> = block_starts.load_tile(shape![1], [pid / 16i32]);
         let bs: Tile<i32, { [128] }> = blk.broadcast(shape![128]);
         let v0: Tile<i32, { [128] }> = o + bs;
         let idx0: Tile<i32, { [128] }> = iota(shape![128]);
@@ -317,9 +328,10 @@ pub mod flock_kernels {
         spin.store(rate);
         roll.store(beta);
 
-        // body_up(f, beta) = (side x f) cos(beta) + side sin(beta), side = (sdx, sdy, 0).
-        let u0x: Tile<f32, { [128] }> = negf(sdy * fz);
-        let u0y: Tile<f32, { [128] }> = sdx * fz;
+        // body_up(f, beta) = (side x f) cos(beta) + side sin(beta), side = (sdx, sdy, 0);
+        // side x f = (sdy fz, -sdx fz, sdx fy - sdy fx).
+        let u0x: Tile<f32, { [128] }> = sdy * fz;
+        let u0y: Tile<f32, { [128] }> = negf(sdx * fz);
         let u0z: Tile<f32, { [128] }> = sdx * fy - sdy * fx;
         let cb: Tile<f32, { [128] }> = cos(beta);
         let sb: Tile<f32, { [128] }> = sin(beta);
@@ -389,92 +401,48 @@ pub mod flock_kernels {
 
     fn ptrs_i32(base: *mut i32, off: Tile<i32, { [128] }>) -> PointerTile<*mut i32, { [128] }> {
         let r0: PointerTile<*mut i32, { [] }> = pointer_to_tile(base);
-        offset_ptrs(r0, off)
+        let p1: PointerTile<*mut i32, { [1] }> = reshape_ptr(r0, shape![1]);
+        let pb: PointerTile<*mut i32, { [128] }> = broadcast_ptr(p1, shape![128]);
+        let out: PointerTile<*mut i32, { [128] }> = pb.offset_tile(off);
+        out
     }
 
-    unsafe fn gather_f32(
-        base: *mut f32,
-        idx: Tile<i32, { [128] }>,
-        live: Tile<bool, { [128] }>,
-    ) -> Tile<f32, { [128] }> {
+    unsafe fn gather_f32(base: *mut f32, idx: Tile<i32, { [128] }>, live: Tile<bool, { [128] }>) -> Tile<f32, { [128] }> {
         let ptrs: PointerTile<*mut f32, { [128] }> = ptrs_f32(base, idx);
         let (v, _t): (Tile<f32, { [128] }>, Token) = unsafe {
-            load_ptr_tko(
-                ptrs,
-                ordering::Weak,
-                None::<scope::TileBlock>,
-                Some(live),
-                Some(0.0f32),
-                None,
-                Latency::<0>,
-            )
+            load_ptr_tko(ptrs, ordering::Weak, None::<scope::TileBlock>, Some(live), Some(0.0f32), None, Latency::<0>)
         };
         v
     }
 
-    unsafe fn gather_i32(
-        base: *mut i32,
-        idx: Tile<i32, { [128] }>,
-        live: Tile<bool, { [128] }>,
-    ) -> Tile<i32, { [128] }> {
+    unsafe fn gather_i32(base: *mut i32, idx: Tile<i32, { [128] }>, live: Tile<bool, { [128] }>) -> Tile<i32, { [128] }> {
         let ptrs: PointerTile<*mut i32, { [128] }> = ptrs_i32(base, idx);
         let (v, _t): (Tile<i32, { [128] }>, Token) = unsafe {
-            load_ptr_tko(
-                ptrs,
-                ordering::Weak,
-                None::<scope::TileBlock>,
-                Some(live),
-                Some(0i32),
-                None,
-                Latency::<0>,
-            )
+            load_ptr_tko(ptrs, ordering::Weak, None::<scope::TileBlock>, Some(live), Some(0i32), None, Latency::<0>)
         };
         v
     }
 
-    unsafe fn scatter_f32(
-        base: *mut f32,
-        idx: Tile<i32, { [128] }>,
-        value: Tile<f32, { [128] }>,
-        live: Tile<bool, { [128] }>,
-    ) {
+    unsafe fn scatter_f32(base: *mut f32, idx: Tile<i32, { [128] }>, value: Tile<f32, { [128] }>, live: Tile<bool, { [128] }>) {
         let ptrs: PointerTile<*mut f32, { [128] }> = ptrs_f32(base, idx);
         let _t: Token = unsafe {
-            store_ptr_tko(
-                ptrs,
-                value,
-                ordering::Weak,
-                None::<scope::TileBlock>,
-                Some(live),
-                None,
-                Latency::<0>,
-            )
+            store_ptr_tko(ptrs, value, ordering::Weak, None::<scope::TileBlock>, Some(live), None, Latency::<0>)
         };
     }
 
-    unsafe fn scatter_i32(
-        base: *mut i32,
-        idx: Tile<i32, { [128] }>,
-        value: Tile<i32, { [128] }>,
-        live: Tile<bool, { [128] }>,
-    ) {
+    unsafe fn scatter_i32(base: *mut i32, idx: Tile<i32, { [128] }>, value: Tile<i32, { [128] }>, live: Tile<bool, { [128] }>) {
         let ptrs: PointerTile<*mut i32, { [128] }> = ptrs_i32(base, idx);
         let _t: Token = unsafe {
-            store_ptr_tko(
-                ptrs,
-                value,
-                ordering::Weak,
-                None::<scope::TileBlock>,
-                Some(live),
-                None,
-                Latency::<0>,
-            )
+            store_ptr_tko(ptrs, value, ordering::Weak, None::<scope::TileBlock>, Some(live), None, Latency::<0>)
         };
     }
 
-    /// `a && b` on bool tiles.
+    /// `a && b` on bool tiles. The "false" tile comes from a comparison: `constant(false,
+    /// shape)` compiles to a tile of TRUE in this DSL version (`constant <i1: 1>` in the Tile IR),
+    /// which silently turned this into `a -> b`.
     fn band(a: Tile<bool, { [128] }>, b: Tile<bool, { [128] }>) -> Tile<bool, { [128] }> {
-        let no: Tile<bool, { [128] }> = constant(false, shape![128]);
+        let z: Tile<i32, { [128] }> = constant(0i32, shape![128]);
+        let no: Tile<bool, { [128] }> = lt_tile(z, z);
         select(a, b, no)
     }
 
@@ -483,24 +451,12 @@ pub mod flock_kernels {
     /// iterate to the largest cell span and bucket size in the tile, masked per lane.
     #[cutile::entry()]
     pub unsafe fn decide(
-        px: *mut f32,
-        py: *mut f32,
-        pz: *mut f32,
-        vx: *mut f32,
-        vy: *mut f32,
-        vz: *mut f32,
-        offsets: *mut i32,
-        sorted: *mut i32,
-        sx: *mut f32,
-        sy: *mut f32,
-        sz: *mut f32,
-        radius: *mut f32,
-        next_decision: *mut f32,
-        centrality: *mut f32,
-        neighbours: *mut i32,
-        n: i32,
-        mask: i32,
-        time: f32,
+        px: *mut f32, py: *mut f32, pz: *mut f32,
+        vx: *mut f32, vy: *mut f32, vz: *mut f32,
+        offsets: *mut i32, sorted: *mut i32,
+        sx: *mut f32, sy: *mut f32, sz: *mut f32,
+        radius: *mut f32, next_decision: *mut f32, centrality: *mut f32, neighbours: *mut i32,
+        n: i32, mask: i32, time: f32,
     ) {
         let pid = program_id(0);
         let i0: Tile<i32, { [128] }> = iota(shape![128]);
@@ -544,8 +500,7 @@ pub mod flock_kernels {
         // forward_of(v)
         let v2: Tile<f32, { [128] }> = ux * ux + uy * uy + uz * uz;
         let vok: Tile<bool, { [128] }> = gt_tile(v2, tiny2);
-        let vrt: Tile<f32, { [128] }> =
-            sqrt(max_tile(v2, tiny2), rounding::NearestEven, ftz::Disabled);
+        let vrt: Tile<f32, { [128] }> = sqrt(max_tile(v2, tiny2), rounding::NearestEven, ftz::Disabled);
         let vinv: Tile<f32, { [128] }> = one / vrt;
         let fx: Tile<f32, { [128] }> = select(vok, ux * vinv, one);
         let fy: Tile<f32, { [128] }> = select(vok, uy * vinv, zero);
@@ -603,12 +558,10 @@ pub mod flock_kernels {
                     let nxd: Tile<f32, { [128] }> = min_tile(max_tile(x, lo_fx), lo_fx + four) - x;
                     let nyd: Tile<f32, { [128] }> = min_tile(max_tile(y, lo_fy), lo_fy + four) - y;
                     let nzd: Tile<f32, { [128] }> = min_tile(max_tile(z, lo_fz), lo_fz + four) - z;
-                    let near: Tile<bool, { [128] }> =
-                        le_tile(nxd * nxd + nyd * nyd + nzd * nzd, r2 + tiny);
+                    let near: Tile<bool, { [128] }> = le_tile(nxd * nxd + nyd * nyd + nzd * nzd, r2 + tiny);
                     let act: Tile<bool, { [128] }> = band(in_box, near);
                     // bucket_of(cell) and its range in the sorted array
-                    let hh: Tile<i32, { [128] }> =
-                        xori(xori(cell_x * m1, cell_y * m2), cell_z * m3);
+                    let hh: Tile<i32, { [128] }> = xori(xori(cell_x * m1, cell_y * m2), cell_z * m3);
                     let bk: Tile<i32, { [128] }> = andi(hh, mk);
                     let st: Tile<i32, { [128] }> = gather_i32(offsets, bk, act);
                     let en: Tile<i32, { [128] }> = gather_i32(offsets, bk + one_i, act);
@@ -640,8 +593,7 @@ pub mod flock_kernels {
                         let m0: Tile<bool, { [128] }> = band(live, same);
                         let m1b: Tile<bool, { [128] }> = band(m0, not_self);
                         let m: Tile<bool, { [128] }> = band(m1b, within);
-                        let dist: Tile<f32, { [128] }> =
-                            sqrt(d2, rounding::NearestEven, ftz::Disabled);
+                        let dist: Tile<f32, { [128] }> = sqrt(d2, rounding::NearestEven, ftz::Disabled);
                         let distc: Tile<f32, { [128] }> = max_tile(dist, eps);
                         let dhx: Tile<f32, { [128] }> = dx / distc;
                         let dhy: Tile<f32, { [128] }> = dy / distc;
@@ -666,8 +618,7 @@ pub mod flock_kernels {
                         let wz: Tile<f32, { [128] }> = gather_f32(vz, j, live);
                         let w2: Tile<f32, { [128] }> = wx * wx + wy * wy + wz * wz;
                         let wok: Tile<bool, { [128] }> = gt_tile(w2, tiny2);
-                        let wrt: Tile<f32, { [128] }> =
-                            sqrt(max_tile(w2, tiny2), rounding::NearestEven, ftz::Disabled);
+                        let wrt: Tile<f32, { [128] }> = sqrt(max_tile(w2, tiny2), rounding::NearestEven, ftz::Disabled);
                         let winv: Tile<f32, { [128] }> = one / wrt;
                         let fjx: Tile<f32, { [128] }> = select(wok, wx * winv, one);
                         let fjy: Tile<f32, { [128] }> = select(wok, wy * winv, zero);
@@ -680,6 +631,7 @@ pub mod flock_kernels {
                 }
             }
         }
+
 
         let mut cs_x: Tile<f32, { [128] }> = zero;
         let mut cs_y: Tile<f32, { [128] }> = zero;
@@ -724,12 +676,10 @@ pub mod flock_kernels {
                     let nxd: Tile<f32, { [128] }> = min_tile(max_tile(x, lo_fx), lo_fx + four) - x;
                     let nyd: Tile<f32, { [128] }> = min_tile(max_tile(y, lo_fy), lo_fy + four) - y;
                     let nzd: Tile<f32, { [128] }> = min_tile(max_tile(z, lo_fz), lo_fz + four) - z;
-                    let near: Tile<bool, { [128] }> =
-                        le_tile(nxd * nxd + nyd * nyd + nzd * nzd, rr2 + tiny);
+                    let near: Tile<bool, { [128] }> = le_tile(nxd * nxd + nyd * nyd + nzd * nzd, rr2 + tiny);
                     let act: Tile<bool, { [128] }> = band(in_box, near);
                     // bucket_of(cell) and its range in the sorted array
-                    let hh: Tile<i32, { [128] }> =
-                        xori(xori(cell_x * m1, cell_y * m2), cell_z * m3);
+                    let hh: Tile<i32, { [128] }> = xori(xori(cell_x * m1, cell_y * m2), cell_z * m3);
                     let bk: Tile<i32, { [128] }> = andi(hh, mk);
                     let st: Tile<i32, { [128] }> = gather_i32(offsets, bk, act);
                     let en: Tile<i32, { [128] }> = gather_i32(offsets, bk + one_i, act);
@@ -761,8 +711,7 @@ pub mod flock_kernels {
                         let m0: Tile<bool, { [128] }> = band(live, same);
                         let m1b: Tile<bool, { [128] }> = band(m0, not_self);
                         let m: Tile<bool, { [128] }> = band(m1b, within);
-                        let dist: Tile<f32, { [128] }> =
-                            sqrt(d2, rounding::NearestEven, ftz::Disabled);
+                        let dist: Tile<f32, { [128] }> = sqrt(d2, rounding::NearestEven, ftz::Disabled);
                         let dnorm: Tile<f32, { [128] }> = max_tile(dist, eps);
                         cs_x = cs_x + select(m, dx / dnorm, zero);
                         cs_y = cs_y + select(m, dy / dnorm, zero);
@@ -772,6 +721,7 @@ pub mod flock_kernels {
                 }
             }
         }
+
 
         // ---- combine (flock-ref model::decide) ----
         let nall_f: Tile<f32, { [128] }> = convert_tile(n_all);
@@ -784,14 +734,12 @@ pub mod flock_kernels {
         let ng_f: Tile<f32, { [128] }> = convert_tile(n_g);
         let has_g: Tile<bool, { [128] }> = gt_tile(ng_f, zero);
         let cs2: Tile<f32, { [128] }> = cs_x * cs_x + cs_y * cs_y + cs_z * cs_z;
-        let cen_raw: Tile<f32, { [128] }> =
-            sqrt(cs2, rounding::NearestEven, ftz::Disabled) / max_tile(ng_f, one);
+        let cen_raw: Tile<f32, { [128] }> = sqrt(cs2, rounding::NearestEven, ftz::Disabled) / max_tile(ng_f, one);
         let cen: Tile<f32, { [128] }> = select(has_g, cen_raw, zero);
 
         let coh2: Tile<f32, { [128] }> = coh_x * coh_x + coh_y * coh_y + coh_z * coh_z;
         let coh_ok: Tile<bool, { [128] }> = gt_tile(coh2, zero);
-        let coh_inv: Tile<f32, { [128] }> =
-            one / sqrt(max_tile(coh2, tiny8), rounding::NearestEven, ftz::Disabled);
+        let coh_inv: Tile<f32, { [128] }> = one / sqrt(max_tile(coh2, tiny8), rounding::NearestEven, ftz::Disabled);
         let w_coh: Tile<f32, { [128] }> = constant(0.65f32, shape![128]);
         let coh_k: Tile<f32, { [128] }> = select(coh_ok, coh_inv * w_coh * cen, zero);
         fx_f = fx_f + coh_x * coh_k;

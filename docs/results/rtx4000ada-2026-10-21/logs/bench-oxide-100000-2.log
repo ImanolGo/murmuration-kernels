@@ -1,0 +1,10 @@
+# flock_oxide: device 0 (sm_89), cuda-oxide e027ac3
+# 100000 birds, 40 steps (20 warm-up, not timed)
+# 20 timed steps (mean GPU ms per pass, CUDA events)
+  grid_histogram      0.0089
+  grid_scan           0.0180
+  grid_scatter        0.0118
+  decide              1.6347
+  integrate           0.0092
+  step total          1.6826
+  bird-steps/s      59432171

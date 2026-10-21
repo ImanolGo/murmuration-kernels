@@ -6,9 +6,13 @@ The cuTile Rust DSL cannot share a loop body between the two neighbourhood walks
 is committed as ordinary source between the GENERATED markers in src/lib.rs.
     python3 tools/gen_decide.py        (rewrites the marked block in place)
 """
-import re, sys, pathlib
+import os, re, sys, pathlib
 
-F, I, B = "Tile<f32, { [128] }>", "Tile<i32, { [128] }>", "Tile<bool, { [128] }>"
+# Birds per tile for `decide` (not the other kernels). Set DECIDE_TILE=32|64|128 when generating.
+TILE = int(os.environ.get("DECIDE_TILE", "128"))
+assert TILE in (16, 32, 64, 128, 256), TILE
+
+F, I, B = "Tile<f32, { [@T] }>", "Tile<i32, { [@T] }>", "Tile<bool, { [@T] }>"
 
 HELPERS = '''
     fn ptrs_f32(base: *mut f32, off: @I) -> PointerTile<*mut f32, { [128] }> {
@@ -21,7 +25,10 @@ HELPERS = '''
 
     fn ptrs_i32(base: *mut i32, off: @I) -> PointerTile<*mut i32, { [128] }> {
         let r0: PointerTile<*mut i32, { [] }> = pointer_to_tile(base);
-        offset_ptrs(r0, off)
+        let p1: PointerTile<*mut i32, { [1] }> = reshape_ptr(r0, shape![1]);
+        let pb: PointerTile<*mut i32, { [128] }> = broadcast_ptr(p1, shape![128]);
+        let out: PointerTile<*mut i32, { [128] }> = pb.offset_tile(off);
+        out
     }
 
     unsafe fn gather_f32(base: *mut f32, idx: @I, live: @B) -> @F {
@@ -54,9 +61,12 @@ HELPERS = '''
         };
     }
 
-    /// `a && b` on bool tiles.
+    /// `a && b` on bool tiles. The "false" tile comes from a comparison: `constant(false,
+    /// shape)` compiles to a tile of TRUE in this DSL version (`constant <i1: 1>` in the Tile IR),
+    /// which silently turned this into `a -> b`.
     fn band(a: @B, b: @B) -> @B {
-        let no: @B = constant(false, shape![128]);
+        let z: @I = constant(0i32, shape![128]);
+        let no: @B = lt_tile(z, z);
         select(a, b, no)
     }
 '''
@@ -338,7 +348,9 @@ DECIDE = '''
 '''
 
 def sub_types(t):
-    return t.replace("@F", F).replace("@I", I).replace("@B", B)
+    t = t.replace("@F", F).replace("@I", I).replace("@B", B)
+    # every remaining 128 in the template is the tile size (pid * 128, shape![128], { [128] }, ...)
+    return re.sub(r"\b128(?=i32\b|\b)", "@T", t).replace("@T", str(TILE))  # also catches 128i32
 
 def build():
     w1 = WALK.replace("@RADIUS", "r").replace("@R2", "r2").replace("@ACCUM", ACCUM_MAIN)
@@ -351,6 +363,12 @@ if __name__ == "__main__":
     s = path.read_text()
     begin, end = "    // GENERATED-BEGIN (tools/gen_decide.py)\n", "    // GENERATED-END\n"
     block = begin + build() + end
+    cbegin, cend = "// GENERATED-TILE-BEGIN\n", "// GENERATED-TILE-END\n"
+    cblock = cbegin + f"/// Birds per tile of the `decide` kernel; written by tools/gen_decide.py (DECIDE_TILE).\npub const DECIDE_TILE: usize = {TILE};\n" + cend
+    if cbegin in s:
+        s = re.sub(re.escape(cbegin) + r".*?" + re.escape(cend), lambda m: cblock, s, flags=re.S)
+    else:
+        s = s.replace("#[cutile::module]", cblock + "\n#[cutile::module]", 1)
     if begin in s:
         s = re.sub(re.escape(begin) + r".*?" + re.escape(end), lambda m: block, s, flags=re.S)
     else:

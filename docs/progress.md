@@ -322,3 +322,82 @@ builds CUDA, oxide and cuTile on the VM, runs the grid check and parity for cuTi
 kernel with Nsight Compute, and bundles the results. Estimated 25-40 minutes on a
 ~$0.4/h VM, under $1 including setup. Not yet run: expect the first GPU execution of the
 cuTile kernels to need debugging.
+
+## 2026-10-21 (night): cuTile Rust runs on a GPU, passes parity, and is slower
+
+Run on a rented RTX 4000 Ada (sm_89, driver 580.105, CUDA 13.3): `docs/results/rtx4000ada-2026-10-21/`.
+The cloud box cost about $0.47 of the $10 credit in total across both attempts and the smoke test.
+
+**Correctness.** The cuTile backend matches the CPU oracle at 1, 10, 30, 100 and 1000 steps (position error
+7.6e-6 after 100 steps, the same as CUDA and cuda-oxide; zero neighbour-count mismatches; 0 outlier birds;
+aggregates inside tolerance at 1000 steps), for both the default build and the tuned one below. This includes the
+hand-written `atan`. Getting there took four fixes, three of them mine:
+1. **Launch contract (mine).** An explicit `.grid()` must equal the tile count of the partitioned tensors, and my
+   padded buffers disagreed ("launch grid (32,1,1) does not match the inferred partition grid (33,1,1)"). The scan
+   now uses separate `block_totals` / `block_starts` buffers and no explicit grid.
+2. **`constant(false, shape)` compiles to a tile of TRUE** (`constant <i1: 1>` in the Tile IR). My `band(a, b) =
+   select(a, b, constant(false))` therefore computed `a -> b`, which let the bird itself into its own neighbour set:
+   every one of 191 deciding birds had exactly one extra neighbour. Found by reading the generated IR, not by guessing.
+   `false` now comes from a comparison. **A DSL/compiler bug worth reporting upstream** (a minimal reproduction is
+   still to be made).
+3. **A sign error in my `body_up` cross product** (`integrate`): small velocity error, only for non-level flight.
+4. **A regex bug in my generator** that left one `128` literal in non-128 tiles, which made every smaller tile fail
+   parity until fixed. Parity caught it before any time was believed.
+
+**Speed.** RTX 4000 Ada, mean ms per step, `decide` (total step in brackets), 3 runs each, spreads under 3 %:
+
+| Birds | CUDA C++ | cuda-oxide | cuTile, defaults | cuTile, tuned |
+|---|---|---|---|---|
+| 100,000 | 1.24 (1.29) | 1.64 (1.69) | 5.57 (5.63) | **2.59** (2.65) |
+| 1,000,000 | 9.46 (9.92) | 12.30 (12.76) | 50.6 (51.0) | **23.3** (23.6) |
+
+Against CUDA C++ the `decide` kernel is 1.3x (oxide), 4.5x / 5.4x (cuTile defaults) and 2.1x / 2.5x (cuTile tuned) at
+100k / 1M birds. The regular passes go the other way: at 1M birds cuTile's `integrate` is 0.126-0.135 ms against
+CUDA's 0.200 ms and its scan 0.040 against 0.076 ms; histogram and scatter are level.
+
+**Tuning, with parity checked for every setting** (`decide` at 100k birds):
+- Tile size (default hints): 16 -> 18.9 ms, 32 -> 13.8, 64 -> 8.8, **128 -> 5.57**, 256 -> 8.7. Smaller tiles, which I
+  expected to cut idle lanes, are slower. 128 is the optimum.
+- `num_worker_warps_per_cta`: 2 -> 5.60, default 4 -> 5.56, 8 -> 11.6, 16 -> 11.8.
+- **Occupancy hint** (`CompileOptions::occupancy`): none 5.56, 2 -> 5.56, 4 -> 4.45, 6 -> 2.82, 8 -> 2.76,
+  **10 -> 2.59**, 12 -> 2.69, 14 -> 3.27, 16 -> 3.26, 24 -> 4.23. Re-checked per tile size: 64 -> 3.9 at best, 256 -> 5.6.
+  Best configuration: tile 128, hint 10 (run-to-run noise between 10 and 12 is about 0.05 ms).
+
+**What Nsight Compute shows** (one warmed-up `decide` launch, 100k birds, same input):
+
+| | CUDA C++ | cuda-oxide | cuTile defaults | cuTile tuned |
+|---|---|---|---|---|
+| duration | 1.26 ms | 1.65 ms | 5.44 ms | 2.56 ms |
+| threads per block | 256 | 256 | 128 | 128 |
+| registers per thread | 62 | 64 | **246** | **48** |
+| theoretical occupancy | 66.7 % | 66.7 % | **16.7 %** | 83.3 % |
+| achieved active warps | 43.7 % | 44.2 % | 16.4 % | 67.3 % |
+| instructions executed | 143 M | 254 M | **1,077 M** | 692 M |
+| issue slots active | 35.9 % | 47.7 % | 50.2 % | 70.2 % |
+| global-load sectors | 13.7 M | 13.7 M | **32.5 M** | 32.5 M |
+| L1 / L2 hit rate | 43 / 99 % | 43 / 98 % | 20 / 100 % | 19 / 100 % |
+
+- By default the assembler picks 246 registers, so only 2 blocks of 128 threads fit per SM (16.7 % occupancy). The
+  occupancy hint makes it use 48 registers instead; that is where the 2.15x comes from.
+- Even tuned, cuTile executes **4.8x the instructions** of CUDA (and 2.7x those of oxide) and issues **2.4x the
+  global-load sectors**, at 70 % issue utilisation. So it is now bound by instruction count, not by occupancy.
+- **What this does not explain.** I did not attribute the extra instructions. Candidates: every lane of a 128-bird
+  tile running to the largest cell span and bucket size in the tile; four separate scalar gathers per candidate where
+  CUDA does one `float4` load (the 2.4x sector count fits this); full-width masked arithmetic. The tile-size sweep
+  argues against idle-lane waste being the whole story, since smaller tiles were slower, but it does not isolate
+  anything. Treat these as hypotheses.
+- Static register counts from the offline compile (246 for `decide`) matched the runtime profile exactly.
+
+**Caveats.** One GPU model, one driver, one workload, one cuda-rust revision. The tuned cuTile result used a search
+over three knobs on this exact input; CUDA and oxide got a far smaller tuning budget (oxide: `launch_bounds` only),
+so the comparison favours cuTile if anything. The wgpu backend was not run on this GPU. The Nsight numbers are one
+launch per variant.
+
+**Other DSL findings from this session** (cuda-rust `e027ac3`): `async_on` lets a whole step be queued and
+synchronised once (needed for event timing); the borrowed partition `(&mut t).partition(..)` writes in place;
+`ncu` on a cuTile kernel works unmodified (kernel name `decide_entry`).
+
+**Next:** the write-up; reduce the `constant(false)` miscompile to a minimal reproduction for upstream; decide what
+to do with the remaining cuTile instruction-count gap (a gather-layout change, `float4`-style loads, is the obvious
+experiment). Rented VMs: none of mine are running. Instance 57040734 ("apg", A40) appeared on the account during the
+session and was not created by this project.
