@@ -31,6 +31,7 @@ vastai create ssh-key "$(cat ~/.ssh/vast_flock.pub)"      # pass the key TEXT, s
 # driver_version: a VM installs its own driver (580 worked with toolkit 13.3), and on
 # 2026-10-21 that filter alone removed every offer.
 vastai search offers 'num_gpus=1 compute_cap>=800 compute_cap<=890 vms_enabled=true reliability>0.95 disk_space>=50 dph<1.0' -o dph
+# add 'cpu_ram<64000' to avoid the slow-booting high-RAM hosts (gotcha 0)
 # offers are rented by others between search and create ("no_such_ask"): have a second ready
 
 # rent it: Vast's recommended "Ubuntu 22.04 VM" template
@@ -46,6 +47,13 @@ vastai show instances                    # must list nothing
 ```
 
 ## Gotchas found
+
+0. **Pick a host with modest CPU RAM.** Vast's console warns that "VM instances with high CPU
+   RAM can take longer to load, around 30+ minutes". On 2026-10-21 a 126 GB host (RTX 4060 Ti,
+   $0.455/h) was still unreachable by SSH 5 minutes after the instance showed `running`, and was
+   destroyed unused; the 49 GB host from the smoke test took 4 minutes. Prefer `cpu_ram < 64000`
+   in the offer query (MB), and note that `actual_status` can read `created` while `cur_state` is
+   `running`: only a successful SSH proves the guest is up.
 
 1. `vastai create ssh-key ~/.ssh/key.pub` (CLI 1.9.0) registered the **path string** as
    the key, which would have left the VM unreachable. Pass the key text:
