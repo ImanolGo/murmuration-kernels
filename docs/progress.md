@@ -431,3 +431,28 @@ on the Ada GPU, level with cuda-oxide there. There are no counters for the wgpu 
 **Process notes.** NVIDIA's apt mirror was mid-sync for several minutes ("File has unexpected size"); `scripts/remote-setup.sh`
 now retries `apt-get update`. A remote `setsid nohup ... &` over SSH can leave the local client attached; poll a log instead of
 waiting on the command.
+
+## 2026-10-29: upstream min/max fix (#1668), measured on sm_75
+
+A contributor opened [#1668](https://github.com/NVIDIA/cuda-rust/pull/1668) for #1594: under the LLVM NVPTX backend, f32
+`max`/`min` now lower to `llvm.nvvm.fmax.f`/`fmin.f` (`max.f32`/`min.f32`); f64 and libNVVM keep compare/select. It
+answers the open question above (min/max cost "not isolated").
+
+**Method.** The `oxide/` crate built against the PR's base (`a4a939a`) and head (`a48c53e`), each with its own
+`cargo-oxide` and backend cache (Rust 1.99.1, which cuda-rust moved to after `e027ac3`), on the GTX 1650 Max-Q
+(sm_75, driver 615.78.08, CUDA 13.4). Not a change to this repo: the published numbers stay on `e027ac3`.
+
+| `decide` | base | #1668 |
+|---|---|---|
+| PTX `max.f32` + `min.f32` | 0 | 18 |
+| PTX `setp.*.f32` / `selp.f32` | 106 / 42 | 73 / 6 |
+| SASS instructions (`ptxas -O3`) | 1,440 | 1,376 |
+| SASS `FMNMX` / `FSETP` / `FSEL` | 0 / 116 / 28 | 18 / 83 / 4 |
+| registers | 64 | 64 |
+| time, 100k birds (median of 3 interleaved runs) | 8.187 ms | 8.133 ms (-0.7 %) |
+| time, 1M birds | 100.92 ms | 100.77 ms (-0.1 %) |
+| instructions executed, one launch at 100k (Nsight Compute) | 255.8 M | 253.7 M (-0.8 %) |
+
+CUDA C++ has 20 `FMNMX` in the same kernel. Parity against the CPU oracle passes for both builds (2,000 birds, 1 to
+1,000 steps). **Result:** the min/max lowering costs under 1 % of time and instructions here, so it explains almost none
+of the 77 % instruction gap. Not measured on sm_89. Review and approval posted on #1668; reply on #1594.

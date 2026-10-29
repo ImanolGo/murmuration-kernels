@@ -47,7 +47,7 @@ why oxide `decide` differs from CUDA: memory behaviour is identical, but oxide u
 registers against 61 (75 % instead of 100 % occupancy; `launch_bounds` fixes that) and,
 even at equal occupancy, executes 77 % more instructions (bounds checks explain about
 a fifth; float min/max compile to compare-and-select instead of the hardware
-instruction). The kernel is latency-bound, so that costs 14 %, not 77 %. There are no
+instruction, which a pending upstream fix shows costs under 1 %). The kernel is latency-bound, so that costs 14 %, not 77 %. There are no
 counters for the wgpu shaders (Nsight Compute does not profile Vulkan compute).
 Details, caveats and what is not tested are in [docs/progress.md](docs/progress.md).
 
